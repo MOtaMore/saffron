@@ -136,12 +136,13 @@ fn near_water(world: &ChunkWorld, pos: Vec3) -> bool {
 
 fn consume(
     keys: Res<ButtonInput<KeyCode>>,
+    binds: Res<crate::keybinds::Keybinds>,
     world: Res<ChunkWorld>,
     mut inventory: ResMut<Inventory>,
     mut stats: ResMut<Stats>,
     player: Query<&Transform, With<Player>>,
 ) {
-    if !keys.just_pressed(KeyCode::KeyG) {
+    if !binds.just_pressed(&keys, crate::keybinds::Action::Consume) {
         return;
     }
     let selected = inventory.selected_item();

@@ -935,11 +935,12 @@ fn hotbar_scroll(
 
 fn toggle_inventory(
     keys: Res<ButtonInput<KeyCode>>,
+    binds: Res<crate::keybinds::Keybinds>,
     mut open: ResMut<InventoryOpen>,
     mut container: ResMut<OpenContainer>,
     mut inventory: ResMut<Inventory>,
 ) {
-    if !keys.just_pressed(KeyCode::KeyI) {
+    if !binds.just_pressed(&keys, crate::keybinds::Action::Inventory) {
         return;
     }
     if container.0.is_some() {

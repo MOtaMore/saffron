@@ -8,18 +8,31 @@ profundidad por capas de Dwarf Fortress.
 
 ## Menú y guardado
 
-Al arrancar aparece el **menú inicial** (estado `GameFlow::Menu`): *Nueva partida*
-(semilla aleatoria), *Continuar* (carga `game/save.json`, gris si no existe),
-*Hostear mundo*, *Unirse a un amigo*, *Skin*, *Salir*. Al jugar:
+Al arrancar aparece el **menú inicial** (`GameFlow::Menu`, en `menu.rs`) con 4
+botones:
 
-- **F5** guarda la partida.
+- **Jugar** → listado de mundos. Cada `*.json` de `game/saves/` es un mundo;
+  eliges uno para cargarlo o **＋ Nuevo mundo** (escribes un nombre → se crea
+  `game/saves/<nombre>.json`). `✕` borra un mundo (dos clics: se pone rojo, luego
+  confirma). Un `save.json` heredado se migra a `saves/Mundo.json` al arrancar.
+- **Multijugador** → listado de servidores, vacío al principio. **＋ Añadir
+  servidor** pide `IP:puerto`; se guarda en `game/servers.json`. Clic en una
+  fila para conectarte; el estado ("Conectando…", "No se pudo conectar: …")
+  aparece abajo. `✕` con doble clic borra la entrada.
+- **Configuración** → *Skin* (`skins.rs`), *Controles* (`keybinds.rs`),
+  *Gráficos* (recorte de visión on/off, radio, brillo ambiental → `graphics.json`).
+- **Salir** → cierra el juego.
+
+`Esc` en un subpantalla vuelve atrás. Al jugar:
+
+- **F5** (rebindable) guarda el **mundo activo** (`CurrentWorld`).
 - El menú de pausa (`Esc`) → **Guardar y salir** guarda antes de cerrar.
 - Cerrar la ventana con la X **no** autoguarda todavía (usa F5).
 
 El guardado (`save.rs`) persiste: semilla del mundo, el **overlay de ediciones**
 (`ChunkWorld::edits`, todo lo que has puesto/roto — que además ahora **sobrevive
 a la descarga de chunks**), inventario + slot activo, contenido de cofres y
-hornos, y posición/vuelo del jugador.
+hornos, y posición del jugador. Cada mundo en su propio archivo bajo `saves/`.
 
 ## Multijugador (`net.rs`) — v1
 
@@ -28,11 +41,10 @@ overlay de ediciones de bloques (construir juntos), la posición/rotación de ca
 jugador, y el chat. **Qué todavía no:** inventario, cofres/hornos, animales,
 items tirados, pesca.
 
-- **Hostear mundo**: servidor de escucha — juegas *y* abres el puerto `25599`
-  para que entren amigos.
-- **Unirse a un amigo**: se conecta a la dirección de `game/join.json`
-  (`127.0.0.1:25599` por defecto; edítalo para apuntar a la IP del anfitrión).
-  También `game --connect <host:puerto>`.
+- **Unirse**: menú **Multijugador** → añade `IP:puerto` y entra. Se guardan en
+  `game/servers.json`. También `game --connect <host:puerto>` desde consola.
+- **Modo escucha (Host)**: el botón del menú se retiró; la maquinaria
+  `NetMode::Host` sigue en el código para reactivarla más adelante.
 - **Modo servidor** (dedicado, tipo Minecraft): `game --server`. Config en
   `game/server.json` (`port`, `seed`, `motd`); el mundo se guarda solo cada 30 s
   en `game/server_world.json` y se recarga al reiniciar. No hay jugador local.
@@ -40,7 +52,7 @@ items tirados, pesca.
 
 ## Skins (`skins.rs`)
 
-Botón **Skin** en el menú inicial y en el de pausa. Muestra una vista previa y
+Botón **Skin** en Configuración y en el menú de pausa. Muestra una vista previa y
 permite recorrer los `*.png` de `assets/textures/player_skin/` con ◀ ▶. La
 elección se guarda en `game/settings.json` y la llevan tanto tu modelo como los
 avatares de los demás jugadores.
@@ -210,6 +222,11 @@ avatares de los demás jugadores.
   estancia).
 
 ## Controles
+
+Las teclas de juego son **remapeables** en Configuración → Controles
+(`keybinds.rs`, `Action`), y se guardan en `game/keybinds.json`. Quedan fijas:
+`Esc` (menús), `1`‥`0` / numpad (hotbar), `Ctrl` (zoom / bajar al volar) y
+`Shift` como paso grande de la rebanada. Valores por defecto:
 
 | Entrada | Acción |
 |---------|--------|

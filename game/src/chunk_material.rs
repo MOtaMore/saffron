@@ -138,8 +138,12 @@ fn setup_material(
     commands.insert_resource(WaterMaterialHandle(water));
 }
 
-fn toggle_cutout(keys: Res<ButtonInput<KeyCode>>, mut settings: ResMut<CutoutSettings>) {
-    if keys.just_pressed(KeyCode::KeyK) {
+fn toggle_cutout(
+    keys: Res<ButtonInput<KeyCode>>,
+    binds: Res<crate::keybinds::Keybinds>,
+    mut settings: ResMut<CutoutSettings>,
+) {
+    if binds.just_pressed(&keys, crate::keybinds::Action::VisionCutout) {
         settings.enabled = !settings.enabled;
     }
 }

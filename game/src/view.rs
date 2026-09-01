@@ -81,14 +81,16 @@ fn head_level(player: &Query<&Transform, With<Player>>) -> Option<i32> {
 fn slice_input(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
+    binds: Res<crate::keybinds::Keybinds>,
     player: Query<&Transform, With<Player>>,
     mut slice: ResMut<ViewSlice>,
     mut cooldown: Local<f32>,
 ) {
+    use crate::keybinds::Action;
     *cooldown -= time.delta_secs();
 
-    // L: toggle automatic player-follow slicing.
-    if keys.just_pressed(KeyCode::KeyL) {
+    // Toggle automatic player-follow slicing.
+    if binds.just_pressed(&keys, Action::ViewToggle) {
         slice.mode = if slice.mode == SliceMode::Auto {
             SliceMode::Off
         } else {
@@ -97,19 +99,19 @@ fn slice_input(
         };
     }
 
-    // Backslash: full view.
-    if keys.just_pressed(KeyCode::Backslash) {
+    // Full view.
+    if binds.just_pressed(&keys, Action::ViewFull) {
         slice.mode = SliceMode::Off;
         slice.peek = 0;
     }
 
-    // '[' lowers the ceiling, ']' raises it. Shift = bigger steps.
+    // Lower / raise the ceiling. Shift = bigger steps.
     let step = if keys.pressed(KeyCode::ShiftLeft) { 5 } else { 1 };
     let mut delta = 0;
-    if keys.pressed(KeyCode::BracketLeft) {
+    if binds.pressed(&keys, Action::ViewLower) {
         delta -= step;
     }
-    if keys.pressed(KeyCode::BracketRight) {
+    if binds.pressed(&keys, Action::ViewRaise) {
         delta += step;
     }
     if delta == 0 || *cooldown > 0.0 {

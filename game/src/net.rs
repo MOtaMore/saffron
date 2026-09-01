@@ -190,11 +190,12 @@ impl Plugin for NetPlugin {
         app.init_resource::<NetMode>()
             .init_resource::<ChatLog>()
             .init_non_send::<ClientSlot>()
+            .add_message::<JoinServer>()
             .add_plugins(ServerCorePlugin)
             .add_systems(Startup, (spawn_chat_ui, spawn_menu_status, maybe_auto_join))
             .add_systems(
                 Update,
-                (net_menu_buttons, client_connect_pump, menu_status_text)
+                (handle_join_server, client_connect_pump, menu_status_text)
                     .run_if(in_state(GameFlow::Menu)),
             )
             .add_systems(
@@ -742,21 +743,6 @@ fn spawn_client(addr: String) -> NetClient {
     }
 }
 
-fn join_config_addr() -> String {
-    #[derive(Serialize, Deserialize)]
-    struct Raw {
-        server: String,
-    }
-    let path = PathBuf::from("join.json");
-    let raw: Raw = std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|t| serde_json::from_str(&t).ok())
-        .unwrap_or(Raw {
-            server: format!("127.0.0.1:{DEFAULT_PORT}"),
-        });
-    let _ = std::fs::write(&path, serde_json::to_string_pretty(&raw).unwrap_or_default());
-    raw.server
-}
 
 /// Menu-state: finish the handshake, then hand off to `GameFlow::Playing` once
 /// the `Welcome` (seed + edit overlay) has landed.
@@ -1001,12 +987,9 @@ fn client_send_move(
 
 // === Menu wiring ======================================================
 
-/// Buttons injected into the main menu by `save::spawn_main_menu`.
-#[derive(Component, Clone, Copy, PartialEq, Eq)]
-pub enum NetMenuButton {
-    Host,
-    Join,
-}
+/// Fired by the "Multijugador" screen to connect to a server by address.
+#[derive(Message)]
+pub struct JoinServer(pub String);
 
 /// Set by `--connect <addr>` on the command line: auto-join on startup.
 #[derive(Resource)]
@@ -1058,29 +1041,16 @@ fn maybe_auto_join(
     }
 }
 
-fn net_menu_buttons(
+fn handle_join_server(
+    mut events: MessageReader<JoinServer>,
     mut slot: NonSendMut<ClientSlot>,
     mut mode: ResMut<NetMode>,
-    mut seed: ResMut<WorldSeed>,
-    mut next: ResMut<NextState<GameFlow>>,
-    buttons: Query<(&Interaction, &NetMenuButton), Changed<Interaction>>,
 ) {
-    for (interaction, button) in &buttons {
-        if *interaction != Interaction::Pressed {
-            continue;
-        }
-        match button {
-            NetMenuButton::Host => {
-                *mode = NetMode::Host;
-                seed.0 = fresh_seed();
-                next.set(GameFlow::Playing);
-            }
-            NetMenuButton::Join => {
-                *mode = NetMode::Client;
-                slot.0 = Some(spawn_client(join_config_addr()));
-            }
-        }
-    }
+    let Some(JoinServer(addr)) = events.read().last() else {
+        return;
+    };
+    *mode = NetMode::Client;
+    slot.0 = Some(spawn_client(addr.clone()));
 }
 
 // === Chat UI ==========================================================

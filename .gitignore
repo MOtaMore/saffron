@@ -26,3 +26,7 @@ game/settings.json
 game/server.json
 game/server_world.json
 game/join.json
+game/saves/
+game/servers.json
+game/keybinds.json
+game/graphics.json

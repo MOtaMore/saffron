@@ -342,9 +342,11 @@ fn issue_move_order(
 fn player_movement(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
+    binds: Res<crate::keybinds::Keybinds>,
     world: Res<ChunkWorld>,
     mut query: Query<(&mut Transform, &mut PlayerBody, &mut MoveOrder), With<Player>>,
 ) {
+    use crate::keybinds::Action;
     let Ok((mut transform, mut body, mut order)) = query.single_mut() else {
         return;
     };
@@ -367,7 +369,7 @@ fn player_movement(
         }
     }
 
-    let speed = if keys.pressed(KeyCode::ShiftLeft) {
+    let speed = if binds.pressed(&keys, Action::Run) {
         RUN_SPEED
     } else {
         WALK_SPEED
@@ -376,7 +378,7 @@ fn player_movement(
     // --- Velocity ----------------------------------------------------------
     if body.fly {
         body.velocity = wish * (speed * 1.8);
-        if keys.pressed(KeyCode::Space) {
+        if binds.pressed(&keys, Action::Jump) {
             body.velocity.y += FLY_SPEED;
         }
         if keys.pressed(KeyCode::ControlLeft) {
@@ -385,7 +387,7 @@ fn player_movement(
     } else {
         body.velocity.x = wish.x * speed;
         body.velocity.z = wish.z * speed;
-        if body.grounded && keys.just_pressed(KeyCode::Space) {
+        if body.grounded && binds.just_pressed(&keys, Action::Jump) {
             body.velocity.y = JUMP_SPEED;
             body.grounded = false;
         }

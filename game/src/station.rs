@@ -84,6 +84,7 @@ fn open_station(
 #[allow(clippy::too_many_arguments)]
 fn station_key(
     keys: Res<ButtonInput<KeyCode>>,
+    binds: Res<crate::keybinds::Keybinds>,
     world: Res<ChunkWorld>,
     player_q: Query<&Transform, With<Player>>,
     mut choices: ResMut<StationChoices>,
@@ -92,7 +93,7 @@ fn station_key(
     mut container: ResMut<OpenContainer>,
     mut inventory: ResMut<Inventory>,
 ) {
-    if !keys.just_pressed(KeyCode::KeyW) {
+    if !binds.just_pressed(&keys, crate::keybinds::Action::Interact) {
         return;
     }
 

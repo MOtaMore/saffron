@@ -107,6 +107,7 @@ fn mine_time(block: Block) -> f32 {
 fn interact_click(
     mouse: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
+    binds: Res<crate::keybinds::Keybinds>,
     inv_open: Res<InventoryOpen>,
     container_open: Res<OpenContainer>,
     fishing: Res<FishingState>,
@@ -123,7 +124,7 @@ fn interact_click(
         || container_open.0.is_some()
         || fishing.busy()
         || !station_menu.0.is_empty();
-    if !ui_busy && keys.just_pressed(KeyCode::KeyB) {
+    if !ui_busy && binds.just_pressed(&keys, crate::keybinds::Action::RoomMode) {
         build.room_mode = !build.room_mode;
         build.room_corner = None;
     }

@@ -15,6 +15,8 @@ mod fishing;
 mod hud;
 mod interact;
 mod item;
+mod keybinds;
+mod menu;
 mod mesher;
 mod net;
 mod pause;
@@ -83,6 +85,7 @@ fn run_game(args: &[String]) -> AppExit {
         survival::SurvivalPlugin,
         farming::FarmingPlugin,
     ))
+    .add_plugins((keybinds::KeybindsPlugin, menu::MenuPlugin))
     .add_systems(Startup, setup_environment);
 
     // `--connect <host:port>` joins straight from the menu.

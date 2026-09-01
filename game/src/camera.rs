@@ -58,15 +58,17 @@ fn spawn_camera(mut commands: Commands) {
 
 fn camera_input(
     keys: Res<ButtonInput<KeyCode>>,
+    binds: Res<crate::keybinds::Keybinds>,
     mut wheel: MessageReader<MouseWheel>,
     mut rig: Query<&mut CameraRig>,
     mut projection: Query<&mut Projection, With<MainCamera>>,
 ) {
+    use crate::keybinds::Action;
     if let Ok(mut rig) = rig.single_mut() {
-        if keys.just_pressed(KeyCode::KeyQ) {
+        if binds.just_pressed(&keys, Action::CameraLeft) {
             rig.target_yaw += std::f32::consts::FRAC_PI_2;
         }
-        if keys.just_pressed(KeyCode::KeyE) {
+        if binds.just_pressed(&keys, Action::CameraRight) {
             rig.target_yaw -= std::f32::consts::FRAC_PI_2;
         }
     }

@@ -2,7 +2,7 @@
 //! working dir (`save.json`): world seed, the player's edit overlay, inventory,
 //! chest/furnace contents and the player transform.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -10,35 +10,82 @@ use serde::{Deserialize, Serialize};
 use crate::block::Block;
 use crate::container::{ChestStores, Furnace, FurnaceStores, Mill, MillStores};
 use crate::item::{CRAFT_SLOTS, HOTBAR, Inventory, Stack};
-use crate::net::NetMenuButton;
 use crate::pause::GameFlow;
 use crate::player::{PendingPlayerSpawn, Player, PlayerBody};
-use crate::skins::OpenSkinsButton;
 use crate::streaming::{ChunkWorld, setup_worldgen};
 use crate::worldgen::WorldSeed;
+
+/// Folder (next to the executable) that holds one `<mundo>.json` per world.
+pub const SAVES_DIR: &str = "saves";
 
 pub struct SavePlugin;
 
 impl Plugin for SavePlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<SaveRequest>()
+            .add_message::<StartWorld>()
             .init_resource::<PendingLoad>()
-            .add_systems(Startup, spawn_main_menu)
+            .init_resource::<CurrentWorld>()
+            .add_systems(Startup, migrate_legacy_save)
             .add_systems(
                 OnEnter(GameFlow::Playing),
                 apply_pending_load.before(setup_worldgen),
             )
-            .add_systems(
-                Update,
-                (
-                    menu_visuals,
-                    extra_menu_button_visuals,
-                    menu_buttons,
-                    save_hotkey,
-                    handle_save_requests,
-                ),
-            );
+            .add_systems(Update, (handle_start_world, save_hotkey, handle_save_requests));
     }
+}
+
+/// Which world file the running game loads from / saves to. Set by the menu
+/// before entering [`GameFlow::Playing`].
+#[derive(Resource)]
+pub struct CurrentWorld(pub PathBuf);
+
+impl Default for CurrentWorld {
+    fn default() -> Self {
+        CurrentWorld(PathBuf::from(SAVES_DIR).join("Mundo.json"))
+    }
+}
+
+/// Fired by the "Jugar" screen: load `path` (or start it fresh if `create`).
+#[derive(Message)]
+pub struct StartWorld {
+    pub path: PathBuf,
+    pub create: bool,
+}
+
+fn migrate_legacy_save() {
+    let legacy = PathBuf::from("save.json");
+    let dir = PathBuf::from(SAVES_DIR);
+    let empty = std::fs::read_dir(&dir)
+        .map(|mut d| d.next().is_none())
+        .unwrap_or(true);
+    if legacy.exists() && empty {
+        let _ = std::fs::create_dir_all(&dir);
+        let _ = std::fs::rename(&legacy, dir.join("Mundo.json"));
+    }
+}
+
+fn handle_start_world(
+    mut events: MessageReader<StartWorld>,
+    mut current: ResMut<CurrentWorld>,
+    mut pending: ResMut<PendingLoad>,
+    mut seed: ResMut<WorldSeed>,
+    mut next: ResMut<NextState<GameFlow>>,
+) {
+    let Some(ev) = events.read().last() else {
+        return;
+    };
+    current.0 = ev.path.clone();
+    match (ev.create, read_world(&ev.path)) {
+        (false, Some(save)) => {
+            pending.0 = Some(save);
+        }
+        _ => {
+            pending.0 = None;
+            seed.0 = fresh_seed();
+        }
+    }
+    next.set(GameFlow::Playing);
 }
 
 /// Ask `save.rs` to write the game (optionally quitting after).
@@ -49,10 +96,6 @@ pub struct SaveRequest {
 
 #[derive(Resource, Default)]
 struct PendingLoad(Option<SaveGame>);
-
-fn save_path() -> PathBuf {
-    PathBuf::from("save.json")
-}
 
 // --- Serialized shape --------------------------------------------------
 
@@ -85,15 +128,18 @@ struct SaveGame {
     mills: Vec<([i32; 3], Mill)>,
 }
 
-fn read_save() -> Option<SaveGame> {
-    let text = std::fs::read_to_string(save_path()).ok()?;
+fn read_world(path: &Path) -> Option<SaveGame> {
+    let text = std::fs::read_to_string(path).ok()?;
     serde_json::from_str(&text).ok()
 }
 
-fn write_save(data: &SaveGame) -> std::io::Result<()> {
+fn write_world(path: &Path, data: &SaveGame) -> std::io::Result<()> {
     let text = serde_json::to_string_pretty(data)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-    std::fs::write(save_path(), text)
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, text)
 }
 
 fn fresh_seed() -> u32 {
@@ -219,8 +265,12 @@ fn snapshot(
     }
 }
 
-fn save_hotkey(keys: Res<ButtonInput<KeyCode>>, mut writer: MessageWriter<SaveRequest>) {
-    if keys.just_pressed(KeyCode::F5) {
+fn save_hotkey(
+    keys: Res<ButtonInput<KeyCode>>,
+    binds: Res<crate::keybinds::Keybinds>,
+    mut writer: MessageWriter<SaveRequest>,
+) {
+    if binds.just_pressed(&keys, crate::keybinds::Action::QuickSave) {
         writer.write(SaveRequest { then_quit: false });
     }
 }
@@ -237,6 +287,7 @@ fn handle_save_requests(
     mut inventory: ResMut<Inventory>,
     stats: Res<crate::survival::Stats>,
     clock: Res<crate::daynight::GameClock>,
+    current: Res<CurrentWorld>,
     player_q: Query<(&Transform, &PlayerBody), With<Player>>,
 ) {
     let mut quit = false;
@@ -252,167 +303,13 @@ fn handle_save_requests(
                 &seed, &world, &chests, &furnaces, &mills, &inventory, transform, body, &stats,
                 &clock,
             );
-            match write_save(&data) {
-                Ok(()) => info!("Partida guardada"),
+            match write_world(&current.0, &data) {
+                Ok(()) => info!("Partida guardada en {}", current.0.display()),
                 Err(e) => error!("No se pudo guardar: {e}"),
             }
         }
     }
     if quit {
         exit.write(AppExit::Success);
-    }
-}
-
-// --- Main menu UI -------------------------------------------------
-
-#[derive(Component)]
-struct MenuRoot;
-
-#[derive(Component, Clone, Copy, PartialEq, Eq)]
-enum MenuButton {
-    New,
-    Continue,
-    Quit,
-}
-
-fn spawn_main_menu(mut commands: Commands) {
-    commands
-        .spawn((
-            Node {
-                position_type: PositionType::Absolute,
-                left: Val::Px(0.0),
-                right: Val::Px(0.0),
-                top: Val::Px(0.0),
-                bottom: Val::Px(0.0),
-                flex_direction: FlexDirection::Column,
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
-                row_gap: Val::Px(16.0),
-                ..default()
-            },
-            BackgroundColor(Color::srgb(0.06, 0.09, 0.12)),
-            GlobalZIndex(200),
-            MenuRoot,
-        ))
-        .with_children(|root| {
-            root.spawn((
-                Text::new("AVES"),
-                TextFont::from_font_size(48.0),
-                TextColor(Color::srgb(0.9, 0.95, 1.0)),
-            ));
-            root.spawn((
-                Text::new("Supervivencia 2.5D"),
-                TextFont::from_font_size(15.0),
-                TextColor(Color::srgb(0.55, 0.65, 0.75)),
-            ));
-            for (label, kind) in [
-                ("Nueva partida", MenuButton::New),
-                ("Continuar", MenuButton::Continue),
-            ] {
-                menu_button(root, label, kind);
-            }
-            menu_button(root, "Hostear mundo", NetMenuButton::Host);
-            menu_button(root, "Unirse a un amigo", NetMenuButton::Join);
-            menu_button(root, "Skin", OpenSkinsButton);
-            menu_button(root, "Salir", MenuButton::Quit);
-        });
-}
-
-/// A menu-styled button carrying `marker`.
-fn menu_button(root: &mut ChildSpawnerCommands, label: &str, marker: impl Bundle) {
-    root.spawn((
-        Button,
-        Node {
-            width: Val::Px(240.0),
-            height: Val::Px(46.0),
-            margin: UiRect::top(Val::Px(4.0)),
-            justify_content: JustifyContent::Center,
-            align_items: AlignItems::Center,
-            ..default()
-        },
-        BackgroundColor(Color::srgb(0.20, 0.22, 0.28)),
-        marker,
-    ))
-    .with_children(|b| {
-        b.spawn((
-            Text::new(label),
-            TextFont::from_font_size(17.0),
-            TextColor(Color::WHITE),
-        ));
-    });
-}
-
-/// Hover/press colours for the non-`MenuButton` menu entries (host/join/skin).
-fn extra_menu_button_visuals(
-    mut buttons: Query<
-        (&Interaction, &mut BackgroundColor),
-        (
-            Changed<Interaction>,
-            Or<(With<NetMenuButton>, With<OpenSkinsButton>)>,
-        ),
-    >,
-) {
-    for (interaction, mut bg) in &mut buttons {
-        *bg = BackgroundColor(match interaction {
-            Interaction::Pressed => Color::srgb(0.30, 0.30, 0.36),
-            Interaction::Hovered => Color::srgb(0.26, 0.40, 0.52),
-            Interaction::None => Color::srgb(0.20, 0.22, 0.28),
-        });
-    }
-}
-
-fn menu_visuals(
-    flow: Res<State<GameFlow>>,
-    mut root: Query<&mut Visibility, With<MenuRoot>>,
-    mut buttons: Query<(&MenuButton, &Interaction, &mut BackgroundColor)>,
-) {
-    if let Ok(mut vis) = root.single_mut() {
-        *vis = if matches!(flow.get(), GameFlow::Menu) {
-            Visibility::Visible
-        } else {
-            Visibility::Hidden
-        };
-    }
-    let has_save = save_path().exists();
-    for (button, interaction, mut bg) in &mut buttons {
-        *bg = if *button == MenuButton::Continue && !has_save {
-            BackgroundColor(Color::srgb(0.13, 0.13, 0.15))
-        } else {
-            BackgroundColor(match interaction {
-                Interaction::Pressed => Color::srgb(0.30, 0.30, 0.36),
-                Interaction::Hovered => Color::srgb(0.26, 0.40, 0.52),
-                Interaction::None => Color::srgb(0.20, 0.22, 0.28),
-            })
-        };
-    }
-}
-
-fn menu_buttons(
-    mut next: ResMut<NextState<GameFlow>>,
-    mut pending: ResMut<PendingLoad>,
-    mut seed: ResMut<WorldSeed>,
-    mut exit: MessageWriter<AppExit>,
-    buttons: Query<(&Interaction, &MenuButton), Changed<Interaction>>,
-) {
-    for (interaction, button) in &buttons {
-        if *interaction != Interaction::Pressed {
-            continue;
-        }
-        match button {
-            MenuButton::New => {
-                pending.0 = None;
-                seed.0 = fresh_seed();
-                next.set(GameFlow::Playing);
-            }
-            MenuButton::Continue => {
-                if let Some(save) = read_save() {
-                    pending.0 = Some(save);
-                    next.set(GameFlow::Playing);
-                }
-            }
-            MenuButton::Quit => {
-                exit.write(AppExit::Success);
-            }
-        }
     }
 }
