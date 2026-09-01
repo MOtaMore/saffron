@@ -59,11 +59,43 @@ permite recorrer los `*.png` de `assets/textures/player_skin/` con ◀ ▶. La
 elección se guarda en `game/settings.json` y la llevan tanto tu modelo como los
 avatares de los demás jugadores.
 
+## Discord Rich Presence (`discord.rs`)
+
+El estado del jugador aparece en tu perfil de Discord. Corre en un hilo aparte
+con IPC; si Discord no está abierto no pasa nada (reintenta cada 15 s).
+
+- **Activarlo**: crea una app en <https://discord.com/developers/applications>,
+  copia el *Application ID* y ponlo en la variable `AVES_DISCORD_APP_ID` o en
+  `game/discord.json` → `{ "app_id": "…" }`. Sin id, la función queda desactivada
+  (lo dice en el log al arrancar). Sube arte llamado `logo`, `day` y `night` en
+  *Rich Presence → Art Assets*.
+- **Qué muestra**:
+  - *Menú*: "En el menú" / "Preparando la aventura".
+  - *Un jugador*: `Mundo: <nombre>` + `❤ vida  🍖 hambre  💧 sed` (o "☠ Derrotado"),
+    icono pequeño día/noche con la fase y la hora, y cronómetro desde que entraste.
+  - *Multijugador*: `En línea · <ip:puerto>`, nº de jugadores (party), stats,
+    icono día/noche y cronómetro.
+- Se refresca cada ~3 s y se envía a Discord como mucho cada 5 s (límite de
+  Discord); solo se re-publica si algo cambió.
+
 ## Estado: Hito 1 — Mundo + exploración
 
-- Generación procedural por *chunks* columna (`32 × 32 × 128`) con ruido FBm:
-  altura de terreno, biomas (llanura, bosque, desierto, nieve), nivel del mar
-  y árboles.
+- Generación procedural por *chunks* columna (`32 × 32 × 128`) con ruido FBm
+  (`worldgen.rs`, función pura → corre en el pool de tareas):
+  - **Terreno base** rolling + biomas (llanura, bosque, desierto, nieve), mar
+    a `y = 48`, árboles.
+  - **Montañas**: regiones raras (`mtn_mask`) con crestas afiladas (ruido
+    *ridged*), roca bajo la superficie a partir de `y ≥ 84` y **picos nevados**
+    por encima de una cota de nieve con ruido (`~82–94`), con roca desnuda
+    asomando en los picos más altos.
+  - **Ríos**: donde el terreno base es bajo (`< mar + 12`), los cruces por cero
+    del ruido `river` cavan un cauce con agua y lecho de arena.
+  - **Cuevas**: túneles 3D (intersección de dos campos de ruido) + cavernas
+    tipo *blob* más frecuentes cerca de la roca madre. No se cavan bajo el
+    fondo marino costero. *(Aún sin iluminación de cueva — el juego no tiene luz
+    por voxel.)*
+  - **Grietas / ravinas**: cortes verticales estrechos y profundos que rompen
+    la superficie, en regiones dispersas (`ravine_mask`).
 - **Cutout de cámara**: el material de los chunks es un `ExtendedMaterial` con
   un shader que vuelve translúcidos (alpha-to-coverage) los fragmentos que están
   entre la cámara y el jugador dentro de un radio en pantalla. El jugador nunca
@@ -304,7 +336,10 @@ cargo run -- --connect 127.0.0.1:25599
 | `station.rs` | Tecla `W`: escaneo + selector de estación (banco / cofre / horno) |
 | `pause.rs` | Menú de pausa (`Esc`) y condición `not_paused` |
 | `net.rs` | Multijugador TCP casero: modos Host/Client/Server, sync de ediciones + jugadores + chat |
+| `menu.rs` | Front-end: Jugar (mundos) / Multijugador (servidores) / Configuración / Salir |
+| `keybinds.rs` | Controles remapeables (`Action` → `KeyCode`) + pantalla de rebind |
 | `skins.rs` | Catálogo de skins + pantalla para verlas y elegirlas |
+| `discord.rs` | Discord Rich Presence en hilo aparte (estado del jugador) |
 | `hud.rs` | Lectura de depuración en pantalla |
 
 ## Assets (para el futuro)

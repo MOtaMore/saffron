@@ -10,6 +10,7 @@ mod chunk;
 mod chunk_material;
 mod container;
 mod daynight;
+mod discord;
 mod farming;
 mod fishing;
 mod hud;
@@ -85,7 +86,11 @@ fn run_game(args: &[String]) -> AppExit {
         survival::SurvivalPlugin,
         farming::FarmingPlugin,
     ))
-    .add_plugins((keybinds::KeybindsPlugin, menu::MenuPlugin))
+    .add_plugins((
+        keybinds::KeybindsPlugin,
+        menu::MenuPlugin,
+        discord::DiscordPlugin,
+    ))
     .add_systems(Startup, setup_environment);
 
     // `--connect <host:port>` joins straight from the menu.

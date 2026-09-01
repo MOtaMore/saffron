@@ -189,6 +189,7 @@ impl Plugin for NetPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<NetMode>()
             .init_resource::<ChatLog>()
+            .init_resource::<CurrentServer>()
             .init_non_send::<ClientSlot>()
             .add_message::<JoinServer>()
             .add_plugins(ServerCorePlugin)
@@ -818,7 +819,7 @@ fn client_connect_pump(
 }
 
 #[derive(Component)]
-struct RemotePlayer {
+pub struct RemotePlayer {
     id: PlayerId,
     target: Vec3,
     yaw: f32,
@@ -1007,6 +1008,11 @@ fn client_send_move(
 #[derive(Message)]
 pub struct JoinServer(pub String);
 
+/// The server address we are currently connected to (or trying to), for the
+/// Discord presence / HUD. `None` in single-player.
+#[derive(Resource, Default)]
+pub struct CurrentServer(pub Option<String>);
+
 /// Set by `--connect <addr>` on the command line: auto-join on startup.
 #[derive(Resource)]
 pub struct AutoJoin(pub String);
@@ -1049,10 +1055,12 @@ fn maybe_auto_join(
     auto: Option<Res<AutoJoin>>,
     mut slot: NonSendMut<ClientSlot>,
     mut mode: ResMut<NetMode>,
+    mut server: ResMut<CurrentServer>,
 ) {
     if let Some(auto) = auto {
         info!("--connect {}", auto.0);
         *mode = NetMode::Client;
+        server.0 = Some(normalize_addr(&auto.0));
         slot.0 = Some(spawn_client(auto.0.clone()));
     }
 }
@@ -1061,11 +1069,13 @@ fn handle_join_server(
     mut events: MessageReader<JoinServer>,
     mut slot: NonSendMut<ClientSlot>,
     mut mode: ResMut<NetMode>,
+    mut server: ResMut<CurrentServer>,
 ) {
     let Some(JoinServer(addr)) = events.read().last() else {
         return;
     };
     *mode = NetMode::Client;
+    server.0 = Some(normalize_addr(addr));
     slot.0 = Some(spawn_client(addr.clone()));
 }
 
