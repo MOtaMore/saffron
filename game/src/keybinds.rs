@@ -75,23 +75,23 @@ impl Action {
         Action::QuickSave,
     ];
 
-    /// Spanish label shown on the Controles screen.
+    /// Label shown on the Controls screen.
     pub fn label(self) -> &'static str {
         match self {
-            Action::Run => "Correr (mantener)",
-            Action::Jump => "Saltar",
-            Action::Inventory => "Inventario",
-            Action::Interact => "Estaciones / interactuar",
-            Action::Consume => "Comer / beber",
-            Action::CameraLeft => "Girar cámara ←",
-            Action::CameraRight => "Girar cámara →",
-            Action::RoomMode => "Modo construir sala",
-            Action::ViewToggle => "Rebanada de vista (auto)",
-            Action::ViewFull => "Vista completa",
-            Action::ViewLower => "Bajar techo de vista",
-            Action::ViewRaise => "Subir techo de vista",
-            Action::VisionCutout => "Recorte de visión",
-            Action::QuickSave => "Guardado rápido",
+            Action::Run => "Run (hold)",
+            Action::Jump => "Jump",
+            Action::Inventory => "Inventory",
+            Action::Interact => "Stations / interact",
+            Action::Consume => "Eat / drink",
+            Action::CameraLeft => "Rotate camera <-",
+            Action::CameraRight => "Rotate camera ->",
+            Action::RoomMode => "Room build mode",
+            Action::ViewToggle => "View slice (auto)",
+            Action::ViewFull => "Full view",
+            Action::ViewLower => "Lower view ceiling",
+            Action::ViewRaise => "Raise view ceiling",
+            Action::VisionCutout => "Vision cutout",
+            Action::QuickSave => "Quick save",
         }
     }
 
@@ -166,7 +166,7 @@ impl Keybinds {
             .collect();
         if let Ok(text) = serde_json::to_string_pretty(&map) {
             if let Err(e) = std::fs::write(Self::path(), text) {
-                warn!("no se pudo guardar keybinds.json: {e}");
+                warn!("could not save keybinds.json: {e}");
             }
         }
     }
@@ -215,7 +215,7 @@ fn key_name(key: KeyCode) -> &'static str {
         .iter()
         .find(|(_, k)| *k == key)
         .map(|(n, _)| *n)
-        .unwrap_or("¿?")
+        .unwrap_or("?")
 }
 
 fn key_from_name(name: &str) -> Option<KeyCode> {
@@ -313,7 +313,7 @@ fn spawn_controls_screen(mut commands: Commands) {
         ))
         .with_children(|root| {
             root.spawn((
-                Text::new("CONTROLES"),
+                Text::new("CONTROLS"),
                 TextFont::from_font_size(30.0),
                 TextColor(Color::srgb(0.9, 0.95, 1.0)),
                 Node {
@@ -366,8 +366,8 @@ fn spawn_controls_screen(mut commands: Commands) {
                 ..default()
             })
             .with_children(|row| {
-                controls_button(row, "Restablecer", ControlsBtn::Reset);
-                controls_button(row, "Cerrar", ControlsBtn::Close);
+                controls_button(row, "Reset", ControlsBtn::Reset);
+                controls_button(row, "Close", ControlsBtn::Close);
             });
         });
 }
@@ -452,7 +452,7 @@ fn capture_rebind(
             screen.capturing = None;
             break;
         }
-        if key_name(ev.key_code) == "¿?" {
+        if key_name(ev.key_code) == "?" {
             continue; // not a bindable key
         }
         binds.0.insert(action, ev.key_code);

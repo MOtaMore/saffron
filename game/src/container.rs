@@ -605,7 +605,7 @@ fn spawn_container_panel(mut commands: Commands) {
                     ))
                     .with_children(|b| {
                         b.spawn((
-                            Text::new("MOLER  (mantener)"),
+                            Text::new("GRIND  (hold)"),
                             TextFont::from_font_size(13.0),
                             TextColor(Color::WHITE),
                         ));
@@ -702,12 +702,12 @@ fn update_container_ui(
     };
     if let Ok(mut text) = title.single_mut() {
         text.0 = match o.kind {
-            ContainerKind::Chest if o.b.is_some() => "Cofre doble".into(),
-            ContainerKind::Chest => "Cofre".into(),
+            ContainerKind::Chest if o.b.is_some() => "Double Chest".into(),
+            ContainerKind::Chest => "Chest".into(),
             ContainerKind::Furnace => {
-                "Horno    [1] mineral   [2] combustible   [3] resultado".into()
+                "Furnace    [1] ore   [2] fuel   [3] result".into()
             }
-            ContainerKind::Mill => "Molino manual    [1] a moler   [2] resultado".into(),
+            ContainerKind::Mill => "Hand Mill    [1] to grind   [2] result".into(),
         };
     }
     if let Ok(mut text) = status.single_mut() {

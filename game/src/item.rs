@@ -107,40 +107,40 @@ impl Item {
     pub fn name(self) -> String {
         match self {
             Item::Block(b) => b.display_name().to_string(),
-            Item::Flint => "Pedernal".into(),
-            Item::Stick => "Palo".into(),
-            Item::Fiber => "Fibra vegetal".into(),
-            Item::Rope => "Soga de plantas".into(),
-            Item::Knife => "Cuchillo de pedernal".into(),
-            Item::Axe => "Hacha de pedernal".into(),
-            Item::Pick => "Pico de pedernal".into(),
-            Item::Shovel => "Pala de pedernal".into(),
-            Item::Arrow => "Flecha de pedernal".into(),
-            Item::FishingRod => "Cana de pescar rudimentaria".into(),
-            Item::Fish => "Pescado".into(),
-            Item::CookedFish => "Pescado cocinado".into(),
-            Item::Charcoal => "Carbon vegetal".into(),
-            Item::Meat => "Carne".into(),
-            Item::Fat => "Grasa".into(),
-            Item::RedMeat => "Carne roja".into(),
-            Item::Leather => "Cuero".into(),
-            Item::Mutton => "Cordero".into(),
-            Item::Wool => "Lana".into(),
-            Item::WhiteMeat => "Carne blanca".into(),
-            Item::Feather => "Pluma".into(),
-            Item::CookedMeat => "Carne asada".into(),
-            Item::CookedRedMeat => "Carne roja asada".into(),
-            Item::CookedMutton => "Cordero asado".into(),
-            Item::CookedWhiteMeat => "Carne blanca asada".into(),
-            Item::Bottle => "Botella vacia".into(),
-            Item::WaterBottle => "Botella de agua".into(),
-            Item::Sickle => "Hoz de pedernal".into(),
-            Item::Seeds => "Semillas".into(),
-            Item::Wheat => "Trigo".into(),
-            Item::Potato => "Papa".into(),
-            Item::Flour => "Harina".into(),
-            Item::Dough => "Masa".into(),
-            Item::Bread => "Pan".into(),
+            Item::Flint => "Flint".into(),
+            Item::Stick => "Stick".into(),
+            Item::Fiber => "Plant Fiber".into(),
+            Item::Rope => "Plant Rope".into(),
+            Item::Knife => "Flint Knife".into(),
+            Item::Axe => "Flint Axe".into(),
+            Item::Pick => "Flint Pickaxe".into(),
+            Item::Shovel => "Flint Shovel".into(),
+            Item::Arrow => "Flint Arrow".into(),
+            Item::FishingRod => "Crude Fishing Rod".into(),
+            Item::Fish => "Fish".into(),
+            Item::CookedFish => "Cooked Fish".into(),
+            Item::Charcoal => "Charcoal".into(),
+            Item::Meat => "Meat".into(),
+            Item::Fat => "Fat".into(),
+            Item::RedMeat => "Red Meat".into(),
+            Item::Leather => "Leather".into(),
+            Item::Mutton => "Mutton".into(),
+            Item::Wool => "Wool".into(),
+            Item::WhiteMeat => "White Meat".into(),
+            Item::Feather => "Feather".into(),
+            Item::CookedMeat => "Cooked Meat".into(),
+            Item::CookedRedMeat => "Cooked Red Meat".into(),
+            Item::CookedMutton => "Cooked Mutton".into(),
+            Item::CookedWhiteMeat => "Cooked White Meat".into(),
+            Item::Bottle => "Empty Bottle".into(),
+            Item::WaterBottle => "Water Bottle".into(),
+            Item::Sickle => "Flint Sickle".into(),
+            Item::Seeds => "Seeds".into(),
+            Item::Wheat => "Wheat".into(),
+            Item::Potato => "Potato".into(),
+            Item::Flour => "Flour".into(),
+            Item::Dough => "Dough".into(),
+            Item::Bread => "Bread".into(),
         }
     }
 
@@ -352,9 +352,9 @@ pub fn can_harvest(block: Block, tool: Option<ToolKind>) -> bool {
 
 pub fn tool_hint(block: Block) -> &'static str {
     match block {
-        Block::Wood => "necesitas un hacha",
-        Block::Stone => "necesitas un pico",
-        Block::Dirt | Block::Grass | Block::Farmland => "necesitas una pala o pico",
+        Block::Wood => "needs an axe",
+        Block::Stone => "needs a pickaxe",
+        Block::Dirt | Block::Grass | Block::Farmland => "needs a shovel or pickaxe",
         _ => "",
     }
 }
@@ -1354,9 +1354,9 @@ fn update_craft_ui(
     }
     if let Ok(mut text) = hint.single_mut() {
         text.0 = if craft_state.near_workbench {
-            "Cuadricula 3x3 (banco de trabajo cerca)".into()
+            "3x3 grid (workbench nearby)".into()
         } else {
-            "Cuadricula 2x2  -  acercate a un banco de trabajo para 3x3".into()
+            "2x2 grid  -  get near a workbench for 3x3".into()
         };
     }
 }

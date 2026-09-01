@@ -1,4 +1,4 @@
-//! Aves — supervivencia 2.5D con mundo voxel infinito y vista de aguila.
+//! Saffron — supervivencia 2.5D con mundo voxel infinito y vista de aguila.
 //!
 //! Hito 1: mundo procedural por chunks + exploracion.
 
@@ -36,6 +36,9 @@ use std::time::Duration;
 
 use bevy::app::ScheduleRunnerPlugin;
 use bevy::prelude::*;
+use bevy::window::PrimaryWindow;
+use bevy::winit::WinitWindows;
+use winit::window::Icon;
 
 fn main() -> AppExit {
     let args: Vec<String> = std::env::args().collect();
@@ -52,7 +55,7 @@ fn run_game(args: &[String]) -> AppExit {
         DefaultPlugins
             .set(WindowPlugin {
                 primary_window: Some(Window {
-                    title: "Aves — Supervivencia 2.5D".into(),
+                    title: "Saffron — 2.5D Survival".into(),
                     ..default()
                 }),
                 ..default()
@@ -91,7 +94,8 @@ fn run_game(args: &[String]) -> AppExit {
         menu::MenuPlugin,
         discord::DiscordPlugin,
     ))
-    .add_systems(Startup, setup_environment);
+    .add_systems(Startup, setup_environment)
+    .add_systems(Update, set_window_icon);
 
     // `--connect <host:port>` joins straight from the menu.
     if let Some(addr) = arg_value(args, "--connect") {
@@ -142,4 +146,37 @@ fn setup_environment(mut commands: Commands) {
         },
         Transform::default(),
     ));
+}
+
+/// Sets the taskbar / titlebar icon from the embedded `assets/icon.ico`. Runs
+/// every frame until the OS window exists, then latches off.
+fn set_window_icon(
+    mut done: Local<bool>,
+    winit_windows: Option<NonSend<WinitWindows>>,
+    primary: Query<Entity, With<PrimaryWindow>>,
+) {
+    if *done {
+        return;
+    }
+    let (Some(winit_windows), Ok(entity)) = (winit_windows, primary.single()) else {
+        return;
+    };
+    let Some(window) = winit_windows.get_window(entity) else {
+        return; // OS window not created yet
+    };
+
+    *done = true;
+    let bytes = include_bytes!("../assets/icon.ico");
+    let rgba = match image::load_from_memory(bytes) {
+        Ok(img) => img.into_rgba8(),
+        Err(e) => {
+            warn!("window icon: {e}");
+            return;
+        }
+    };
+    let (w, h) = rgba.dimensions();
+    match Icon::from_rgba(rgba.into_raw(), w, h) {
+        Ok(icon) => window.set_window_icon(Some(icon)),
+        Err(e) => warn!("window icon: {e}"),
+    }
 }

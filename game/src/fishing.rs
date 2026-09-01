@@ -399,8 +399,8 @@ fn update_fishing_ui(
 ) {
     let (label, show) = match state.0 {
         Phase::Idle => ("", false),
-        Phase::Waiting { .. } => ("Lanzando... espera a que pique", true),
-        Phase::Hooked => ("¡Pica! CLIC IZQUIERDO para recoger", true),
+        Phase::Waiting { .. } => ("Cast out... wait for a bite", true),
+        Phase::Hooked => ("Bite! LEFT CLICK to reel in", true),
     };
     if let Ok(mut vis) = root.single_mut() {
         *vis = if show {

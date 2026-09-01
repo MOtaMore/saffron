@@ -38,9 +38,9 @@ pub enum StationKind {
 impl StationKind {
     fn label(self) -> &'static str {
         match self {
-            StationKind::Workbench => "Banco de trabajo",
-            StationKind::Chest => "Cofre",
-            StationKind::Furnace => "Horno",
+            StationKind::Workbench => "Workbench",
+            StationKind::Chest => "Chest",
+            StationKind::Furnace => "Furnace",
         }
     }
 
@@ -222,7 +222,7 @@ fn spawn_station_menu(mut commands: Commands) {
             ))
             .with_children(|panel| {
                 panel.spawn((
-                    Text::new("Que quieres usar?"),
+                    Text::new("What do you want to use?"),
                     TextFont::from_font_size(16.0),
                     TextColor(Color::WHITE),
                 ));

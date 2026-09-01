@@ -3,7 +3,7 @@
 //! sends it over a channel, so a missing/!running Discord never stalls the game.
 //!
 //! **Setup:** create an app at <https://discord.com/developers/applications>,
-//! copy its *Application ID*, and provide it via the `AVES_DISCORD_APP_ID`
+//! copy its *Application ID*, and provide it via the `SAFFRON_DISCORD_APP_ID`
 //! environment variable or a `game/discord.json` = `{ "app_id": "..." }`.
 //! Upload art named `logo`, `day` and `night` under *Rich Presence → Art Assets*.
 //! With no id the feature is simply disabled.
@@ -40,7 +40,7 @@ impl Plugin for DiscordPlugin {
             }
             None => {
                 info!(
-                    "Discord Rich Presence desactivado (define AVES_DISCORD_APP_ID \
+                    "Discord Rich Presence desactivado (define SAFFRON_DISCORD_APP_ID \
                      o game/discord.json con {{\"app_id\": \"…\"}})"
                 );
                 DiscordLink(None)
@@ -87,9 +87,9 @@ struct Snapshot {
 impl Snapshot {
     fn menu() -> Self {
         Snapshot {
-            details: "En el menú".into(),
-            state: "Preparando la aventura".into(),
-            large_text: "Aves — Supervivencia 2.5D".into(),
+            details: "In the menu".into(),
+            state: "Getting ready".into(),
+            large_text: "Saffron — 2.5D Survival".into(),
             small_image: None,
             small_text: String::new(),
             party: None,
@@ -100,11 +100,11 @@ impl Snapshot {
 
 fn day_phase(t: f32) -> &'static str {
     match t.rem_euclid(1.0) {
-        x if x < 0.23 => "Noche",
-        x if x < 0.30 => "Amanecer",
-        x if x < 0.70 => "Día",
-        x if x < 0.77 => "Atardecer",
-        _ => "Noche",
+        x if x < 0.23 => "Night",
+        x if x < 0.30 => "Dawn",
+        x if x < 0.70 => "Day",
+        x if x < 0.77 => "Dusk",
+        _ => "Night",
     }
 }
 
@@ -135,7 +135,7 @@ fn sample_presence(
         Snapshot::menu()
     } else {
         let stat_line = if stats.health <= 0.5 {
-            "☠ Derrotado".to_string()
+            "☠ Defeated".to_string()
         } else {
             format!(
                 "❤ {}    🍖 {}    💧 {}",
@@ -153,11 +153,11 @@ fn sample_presence(
             let addr = server
                 .0
                 .clone()
-                .unwrap_or_else(|| "servidor".to_string());
+                .unwrap_or_else(|| "server".to_string());
             Snapshot {
-                details: format!("En línea · {addr}"),
-                state: format!("{n} jugando    ·    {stat_line}"),
-                large_text: "Aves — Multijugador".into(),
+                details: format!("Online · {addr}"),
+                state: format!("{n} playing    ·    {stat_line}"),
+                large_text: "Saffron — Multiplayer".into(),
                 small_image,
                 small_text,
                 party: Some((n, n.max(2))),
@@ -168,12 +168,12 @@ fn sample_presence(
                 .0
                 .file_stem()
                 .and_then(|s| s.to_str())
-                .unwrap_or("Mundo")
+                .unwrap_or("World")
                 .to_string();
             Snapshot {
-                details: format!("Mundo: {name}"),
+                details: format!("World: {name}"),
                 state: stat_line,
-                large_text: "Aves — Supervivencia 2.5D".into(),
+                large_text: "Saffron — 2.5D Survival".into(),
                 small_image,
                 small_text,
                 party: None,
@@ -188,7 +188,7 @@ fn sample_presence(
 // === Config ========================================================
 
 fn load_app_id() -> Option<String> {
-    if let Ok(v) = std::env::var("AVES_DISCORD_APP_ID") {
+    if let Ok(v) = std::env::var("SAFFRON_DISCORD_APP_ID") {
         let v = v.trim();
         if !v.is_empty() {
             return Some(v.to_string());
@@ -214,7 +214,7 @@ fn load_app_id() -> Option<String> {
 
 fn worker(rx: Receiver<Snapshot>, app_id: String) {
     let Ok(mut client) = DiscordIpcClient::new(&app_id) else {
-        warn!("Discord RPC: app id inválido");
+        warn!("Discord RPC: invalid app id");
         return;
     };
 

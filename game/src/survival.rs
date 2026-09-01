@@ -283,7 +283,7 @@ fn spawn_survival_ui(mut commands: Commands) {
             justify_content: JustifyContent::Center,
             ..default()
         },
-        Text::new("HAS MUERTO"),
+        Text::new("YOU DIED"),
         TextFont::from_font_size(40.0),
         TextColor(Color::srgb(0.95, 0.25, 0.25)),
         Visibility::Hidden,

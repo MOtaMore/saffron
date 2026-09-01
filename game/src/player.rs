@@ -302,7 +302,7 @@ fn spawn_player(
     if pending.is_some() {
         commands.remove_resource::<PendingPlayerSpawn>();
     }
-    info!("Jugador generado en {start:?}");
+    info!("Player spawned at {start:?}");
 }
 
 /// Right mouse button (held) sets / updates the move target by raycasting the

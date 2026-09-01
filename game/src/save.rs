@@ -304,8 +304,8 @@ fn handle_save_requests(
                 &clock,
             );
             match write_world(&current.0, &data) {
-                Ok(()) => info!("Partida guardada en {}", current.0.display()),
-                Err(e) => error!("No se pudo guardar: {e}"),
+                Ok(()) => info!("Game saved to {}", current.0.display()),
+                Err(e) => error!("Could not save: {e}"),
             }
         }
     }

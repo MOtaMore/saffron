@@ -83,7 +83,7 @@ enum RootButton {
     Quit,
 }
 
-/// Generic "go to this screen" button (also used for Back → Root).
+/// Generic "go to this screen" button (also used for Back -> Root).
 #[derive(Component, Clone, Copy)]
 struct GoTo(MenuNav);
 
@@ -130,7 +130,7 @@ fn sanitize_name(raw: &str) -> String {
         .collect();
     let cleaned = cleaned.trim();
     if cleaned.is_empty() {
-        "Mundo".to_string()
+        "World".to_string()
     } else {
         cleaned.to_string()
     }
@@ -343,9 +343,9 @@ struct ServerListNode;
 fn spawn_menu(mut commands: Commands) {
     // --- Root -------------------------------------------------------
     commands.spawn(screen_root(MenuNav::Root)).with_children(|root| {
-        title(root, "AVES", 48.0);
+        title(root, "SAFFRON", 48.0);
         root.spawn((
-            Text::new("Supervivencia 2.5D"),
+            Text::new("2.5D Survival"),
             TextFont::from_font_size(14.0),
             TextColor(Color::srgb(0.55, 0.65, 0.75)),
             Node {
@@ -353,17 +353,17 @@ fn spawn_menu(mut commands: Commands) {
                 ..default()
             },
         ));
-        button(root, "Jugar", RootButton::Play);
-        button(root, "Multijugador", RootButton::Multiplayer);
-        button(root, "Configuración", RootButton::Settings);
-        button(root, "Salir", RootButton::Quit);
+        button(root, "Play", RootButton::Play);
+        button(root, "Multiplayer", RootButton::Multiplayer);
+        button(root, "Settings", RootButton::Settings);
+        button(root, "Quit", RootButton::Quit);
     });
 
     // --- Worlds ---------------------------------------------------
     commands
         .spawn(screen_root(MenuNav::Worlds))
         .with_children(|root| {
-            title(root, "MUNDOS", 32.0);
+            title(root, "WORLDS", 32.0);
             root.spawn((
                 Node {
                     flex_direction: FlexDirection::Column,
@@ -374,15 +374,15 @@ fn spawn_menu(mut commands: Commands) {
                 },
                 WorldListNode,
             ));
-            button(root, "＋ Nuevo mundo", OpenEntry(EntryTarget::NewWorld));
-            button(root, "Volver", GoTo(MenuNav::Root));
+            button(root, "+ New world", OpenEntry(EntryTarget::NewWorld));
+            button(root, "Back", GoTo(MenuNav::Root));
         });
 
     // --- Servers ------------------------------------------------
     commands
         .spawn(screen_root(MenuNav::Servers))
         .with_children(|root| {
-            title(root, "MULTIJUGADOR", 30.0);
+            title(root, "MULTIPLAYER", 30.0);
             root.spawn((
                 Node {
                     flex_direction: FlexDirection::Column,
@@ -393,38 +393,38 @@ fn spawn_menu(mut commands: Commands) {
                 },
                 ServerListNode,
             ));
-            button(root, "＋ Añadir servidor", OpenEntry(EntryTarget::NewServer));
-            button(root, "Volver", GoTo(MenuNav::Root));
+            button(root, "+ Add server", OpenEntry(EntryTarget::NewServer));
+            button(root, "Back", GoTo(MenuNav::Root));
         });
 
     // --- Settings ---------------------------------------------
     commands
         .spawn(screen_root(MenuNav::Settings))
         .with_children(|root| {
-            title(root, "CONFIGURACIÓN", 30.0);
+            title(root, "SETTINGS", 30.0);
             button(root, "Skin", OpenSkinsButton);
-            button(root, "Controles", OpenControlsButton);
-            button(root, "Gráficos", GoTo(MenuNav::Graphics));
-            button(root, "Volver", GoTo(MenuNav::Root));
+            button(root, "Controls", OpenControlsButton);
+            button(root, "Graphics", GoTo(MenuNav::Graphics));
+            button(root, "Back", GoTo(MenuNav::Root));
         });
 
     // --- Graphics -------------------------------------------
     commands
         .spawn(screen_root(MenuNav::Graphics))
         .with_children(|root| {
-            title(root, "GRÁFICOS", 30.0);
-            gfx_row(root, GraphicsLabel::Cutout, "Recorte de visión", &[
+            title(root, "GRAPHICS", 30.0);
+            gfx_row(root, GraphicsLabel::Cutout, "Vision cutout", &[
                 ("", GraphicsButton::ToggleCutout),
             ]);
-            gfx_row(root, GraphicsLabel::Radius, "Radio de recorte", &[
+            gfx_row(root, GraphicsLabel::Radius, "Cutout radius", &[
                 ("−", GraphicsButton::RadiusDown),
                 ("＋", GraphicsButton::RadiusUp),
             ]);
-            gfx_row(root, GraphicsLabel::Brightness, "Brillo ambiental", &[
+            gfx_row(root, GraphicsLabel::Brightness, "Ambient brightness", &[
                 ("−", GraphicsButton::BrightnessDown),
                 ("＋", GraphicsButton::BrightnessUp),
             ]);
-            button(root, "Volver", GoTo(MenuNav::Settings));
+            button(root, "Back", GoTo(MenuNav::Settings));
         });
 
     // --- Shared text-entry pill (floats near bottom) -------------
@@ -638,7 +638,7 @@ fn rebuild_world_list(
     commands.entity(node).with_children(|list_node| {
         if list.worlds.is_empty() {
             list_node.spawn((
-                Text::new("No hay mundos todavía."),
+                Text::new("No worlds yet."),
                 TextFont::from_font_size(14.0),
                 TextColor(Color::srgb(0.6, 0.65, 0.72)),
                 WorldRow,
@@ -769,7 +769,7 @@ fn rebuild_server_list(
     commands.entity(node).with_children(|list_node| {
         if list.servers.is_empty() {
             list_node.spawn((
-                Text::new("Sin servidores. Añade uno con su IP."),
+                Text::new("No servers. Add one by its IP."),
                 TextFont::from_font_size(14.0),
                 TextColor(Color::srgb(0.6, 0.65, 0.72)),
                 ServerRow,
@@ -1040,8 +1040,8 @@ fn sync_text_entry(
     }
     if let Ok(mut text) = text.single_mut() {
         let prompt = match entry.target {
-            Some(EntryTarget::NewWorld) => "Nombre del mundo: ",
-            Some(EntryTarget::NewServer) => "Dirección (IP:puerto): ",
+            Some(EntryTarget::NewWorld) => "World name: ",
+            Some(EntryTarget::NewServer) => "Address (IP:port): ",
             None => "",
         };
         text.0 = format!("{prompt}{}_", entry.buf);

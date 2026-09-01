@@ -282,7 +282,7 @@ impl ServerConfig {
             .unwrap_or(Raw {
                 port: DEFAULT_PORT,
                 seed: 0,
-                motd: "Servidor Aves".into(),
+                motd: "Saffron Server".into(),
             });
         if raw.seed == 0 {
             raw.seed = fresh_seed();
@@ -347,7 +347,7 @@ fn server_start_listener(
     if *mode == NetMode::Server {
         let saved = load_server_edits();
         if !saved.is_empty() {
-            info!("mundo del servidor: {} bloques editados", saved.len());
+            info!("server world: {} edited blocks", saved.len());
             world.edits = saved;
         }
     }
@@ -355,7 +355,7 @@ fn server_start_listener(
     let listener = match TcpListener::bind(("0.0.0.0", port)) {
         Ok(l) => l,
         Err(e) => {
-            error!("no se pudo abrir el puerto {port}: {e}");
+            error!("could not open port {port}: {e}");
             // Insert an empty server so we don't retry every frame forever.
             slot.0 = Some(NetServer {
                 inbound: channel().1,
@@ -368,7 +368,7 @@ fn server_start_listener(
         }
     };
     let motd = config.as_deref().map(|c| c.motd.as_str()).unwrap_or("");
-    info!("servidor escuchando en el puerto {port}  ·  {motd}");
+    info!("server listening on port {port}  ·  {motd}");
 
     let (tx, rx) = channel::<Inbound>();
     thread::spawn(move || accept_loop(listener, tx));
@@ -450,7 +450,7 @@ fn server_pump(
                     id,
                     Conn {
                         out,
-                        name: format!("Jugador {id}"),
+                        name: format!("Player {id}"),
                         skin: "motamore_skin".into(),
                         mv: None,
                         mv_dirty: false,
@@ -464,7 +464,7 @@ fn server_pump(
             Ok(Inbound::Dropped(id)) => {
                 if let Some(c) = server.conns.remove(&id) {
                     server.broadcast(&ServerMsg::Left { id });
-                    chat.push_line(format!("{} salió", c.name));
+                    chat.push_line(format!("{} left", c.name));
                 }
             }
             Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,
@@ -522,7 +522,7 @@ fn handle_client_msg(
                     skin,
                 },
             );
-            chat.push_line(format!("{name} entró"));
+            chat.push_line(format!("{name} joined"));
         }
         ClientMsg::Move { pos, yaw, moving } => {
             if let Some(c) = server.conns.get_mut(&id) {
@@ -546,7 +546,7 @@ fn handle_client_msg(
                 .conns
                 .get(&id)
                 .map(|c| c.name.clone())
-                .unwrap_or_else(|| format!("Jugador {id}"));
+                .unwrap_or_else(|| format!("Player {id}"));
             server.broadcast(&ServerMsg::Chat {
                 from: from.clone(),
                 text: text.clone(),
@@ -788,7 +788,7 @@ fn client_connect_pump(
                 client.state = ClientState::Failed(e);
             }
             Ok(ClientEvent::Dropped) => {
-                client.state = ClientState::Failed("conexión cerrada".into());
+                client.state = ClientState::Failed("connection closed".into());
             }
             Ok(ClientEvent::Msg(ServerMsg::Welcome {
                 id,
@@ -854,14 +854,14 @@ fn client_game_pump(
         match ev {
             ClientEvent::Dropped => {
                 client.state = ClientState::Lost;
-                chat.push_line("Se perdió la conexión con el servidor");
+                chat.push_line("Lost connection to the server");
             }
             ClientEvent::Msg(ServerMsg::Joined { id, name, skin }) => {
                 if id == client.my_id {
                     continue;
                 }
                 spawn_remote(&mut commands, &server, id, skin, default_spawn(), 0.0);
-                chat.push_line(format!("{name} entró"));
+                chat.push_line(format!("{name} joined"));
             }
             ClientEvent::Msg(ServerMsg::Left { id }) => {
                 for (entity, remote) in &remotes {
@@ -1044,10 +1044,10 @@ fn menu_status_text(slot: NonSend<ClientSlot>, mut text: Query<&mut Text, With<M
     };
     text.0 = match slot.0.as_ref().map(|c| &c.state) {
         None => String::new(),
-        Some(ClientState::Connecting | ClientState::Handshaking) => "Conectando…".into(),
-        Some(ClientState::Playing) => "Conectado".into(),
-        Some(ClientState::Lost) => "Conexión perdida".into(),
-        Some(ClientState::Failed(e)) => format!("No se pudo conectar: {e}"),
+        Some(ClientState::Connecting | ClientState::Handshaking) => "Connecting…".into(),
+        Some(ClientState::Playing) => "Connected".into(),
+        Some(ClientState::Lost) => "Connection lost".into(),
+        Some(ClientState::Failed(e)) => format!("Could not connect: {e}"),
     };
 }
 
@@ -1245,7 +1245,7 @@ fn whoami() -> String {
         .ok()
         .map(|n| sanitize(&n, 24))
         .filter(|n| !n.is_empty())
-        .unwrap_or_else(|| "Jugador".into())
+        .unwrap_or_else(|| "Player".into())
 }
 
 fn fresh_seed() -> u32 {

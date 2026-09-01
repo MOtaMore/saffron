@@ -73,13 +73,13 @@ fn spawn_pause_menu(mut commands: Commands) {
             })
             .with_children(|col| {
                 col.spawn((
-                    Text::new("PAUSA"),
+                    Text::new("PAUSED"),
                     TextFont::from_font_size(30.0),
                     TextColor(Color::WHITE),
                 ));
-                pause_button(col, "Volver al juego", PauseButton::Resume);
+                pause_button(col, "Back to game", PauseButton::Resume);
                 pause_button(col, "Skin", OpenSkinsButton);
-                pause_button(col, "Guardar y salir", PauseButton::Quit);
+                pause_button(col, "Save and quit", PauseButton::Quit);
             });
         });
 }

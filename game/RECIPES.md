@@ -1,4 +1,4 @@
-# Recetas — Aves
+# Recetas — Saffron
 
 Referencia de todos los crafteos, fundidos y formas de conseguir materiales.
 Documento vivo: edítalo para ir dándole forma al árbol de progresión.

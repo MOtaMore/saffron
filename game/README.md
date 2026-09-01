@@ -1,4 +1,4 @@
-# Aves — supervivencia 2.5D (Bevy + Rust)
+# Saffron — supervivencia 2.5D (Bevy + Rust)
 
 Mundo voxel infinito generado proceduralmente, visto en perspectiva de águila
 con cámara ortográfica. Inspiración: exploración infinita de Minecraft +
@@ -65,7 +65,7 @@ El estado del jugador aparece en tu perfil de Discord. Corre en un hilo aparte
 con IPC; si Discord no está abierto no pasa nada (reintenta cada 15 s).
 
 - **Activarlo**: crea una app en <https://discord.com/developers/applications>,
-  copia el *Application ID* y ponlo en la variable `AVES_DISCORD_APP_ID` o en
+  copia el *Application ID* y ponlo en la variable `SAFFRON_DISCORD_APP_ID` o en
   `game/discord.json` → `{ "app_id": "…" }`. Sin id, la función queda desactivada
   (lo dice en el log al arrancar). Sube arte llamado `logo`, `day` y `night` en
   *Rich Presence → Art Assets*.
@@ -208,6 +208,12 @@ con IPC; si Discord no está abierto no pasa nada (reintenta cada 15 s).
   gallinas, Trigo → vacas y ovejas, Papa → cerdos) lo **atraes** (te sigue), y
   golpearlo con esa comida lo **alimenta** (cura a tope, consume 1) en vez de
   herirlo.
+  **Cría** (`breed_animals`): alimentar a un adulto lo pone en *modo amor* ~18 s;
+  dos animales del mismo tipo en modo amor y juntos (≤2,2) generan una **cría**,
+  y luego no pueden volver a criar durante 75 s. La cría nace pequeña y crece en
+  ~75 s (alimentarla acelera el crecimiento −12 s); las crías no sueltan nada al
+  morir. Tope de 12 animales por chunk de origen. *(Los animales no se guardan:
+  las crías desaparecen al descargar el chunk, como el resto.)*
 - **Ciclo día/noche** (`daynight.rs`): un día completo dura 20 min reales. El sol
   gira y cambia de color, el cielo y la luz ambiental pasan de día → atardecer →
   noche → amanecer. De noche baja la luz (con un tinte azul tenue de "luna"). La
@@ -350,6 +356,11 @@ cargo run -- --connect 127.0.0.1:25599
   faltan caen a color plano.
 - `assets/models/` — modelos 3D `.glb` de cosas especiales (cofre, horno, banco…).
 - `assets/shaders/chunk_cutout.wgsl` — shader del material de chunk (en uso).
+- `assets/icon.ico` — icono del juego. En runtime se incrusta con `include_bytes!`
+  y se aplica a la ventana (`main::set_window_icon`); en Windows `build.rs`
+  (`winresource`) lo mete además en el `.exe` (Explorer / barra de tareas). En
+  Linux `build.rs` no hace nada; si falta `rc.exe` del SDK de Windows el build
+  sigue con un warning.
 
 ## Siguientes hitos (propuesta)
 

@@ -1,7 +1,7 @@
 //! Ambient wildlife: cows, chickens, sheep and pigs that spawn in herds of 3
 //! per chunk and wander around, following the ground.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use bevy::prelude::*;
 
@@ -22,6 +22,17 @@ const HIT_PIXELS: f32 = 55.0;
 /// How close the player must be, holding the animal's favourite food, to lure it.
 const LURE_RADIUS: f32 = 6.0;
 
+/// Feeding an adult puts it in "love mode" for this long; two loving animals of
+/// the same kind that meet spawn a baby, then can't breed again for a while.
+const LOVE_TIME: f32 = 18.0;
+const BREED_COOLDOWN: f32 = 75.0;
+const BREED_DIST: f32 = 2.2;
+/// Seconds a newborn stays small; feeding a baby its favourite food speeds it up.
+const BABY_GROW_TIME: f32 = 75.0;
+const BABY_SCALE: f32 = 0.5;
+/// Don't let a single home chunk's herd grow past this.
+const MAX_PER_HOME: usize = 12;
+
 pub struct AnimalPlugin;
 
 impl Plugin for AnimalPlugin {
@@ -30,7 +41,7 @@ impl Plugin for AnimalPlugin {
             .add_systems(Startup, setup_animal_assets)
             .add_systems(
                 Update,
-                (spawn_herds, animal_ai, despawn_far_animals)
+                (spawn_herds, animal_ai, breed_animals, despawn_far_animals)
                     .run_if(in_state(crate::pause::GameFlow::Playing)),
             )
             .add_systems(Update, attack_animals.run_if(player_free));
@@ -127,6 +138,14 @@ struct Animal {
     wait: f32,
     vy: f32,
     health: f32,
+    /// >0 while in "love mode" (recently fed as an adult).
+    love: f32,
+    /// >0 while unable to breed again after a birth.
+    breed_cd: f32,
+    /// Seconds of baby-hood left; 0 = adult.
+    grow: f32,
+    /// Current visual scale (`BABY_SCALE`..1.0).
+    scale: f32,
 }
 
 #[derive(Resource)]
@@ -201,30 +220,51 @@ fn spawn_herds(
 
             let body = kind.body();
             let pos = Vec3::new(wx as f32 + 0.5, h as f32 + 1.0 + body.y * 0.5, wz as f32 + 0.5);
-
-            commands
-                .spawn((
-                    Mesh3d(assets.body[kind.index()].clone()),
-                    MeshMaterial3d(assets.material[kind.index()].clone()),
-                    Transform::from_translation(pos),
-                    Animal {
-                        kind,
-                        home: *coord,
-                        target: pos.xz(),
-                        wait: 0.0,
-                        vy: 0.0,
-                        health: kind.max_health(),
-                    },
-                ))
-                .with_children(|a| {
-                    a.spawn((
-                        Mesh3d(assets.head[kind.index()].clone()),
-                        MeshMaterial3d(assets.material[kind.index()].clone()),
-                        Transform::from_xyz(body.x * 0.45, body.y * 0.2, 0.0),
-                    ));
-                });
+            spawn_animal(&mut commands, &assets, kind, *coord, pos, false);
         }
     }
+}
+
+/// Spawns one animal (body + head child). `baby` starts it small and growing.
+fn spawn_animal(
+    commands: &mut Commands,
+    assets: &AnimalAssets,
+    kind: AnimalKind,
+    home: ChunkCoord,
+    pos: Vec3,
+    baby: bool,
+) {
+    let body = kind.body();
+    let (grow, scale) = if baby {
+        (BABY_GROW_TIME, BABY_SCALE)
+    } else {
+        (0.0, 1.0)
+    };
+    commands
+        .spawn((
+            Mesh3d(assets.body[kind.index()].clone()),
+            MeshMaterial3d(assets.material[kind.index()].clone()),
+            Transform::from_translation(pos).with_scale(Vec3::splat(scale)),
+            Animal {
+                kind,
+                home,
+                target: pos.xz(),
+                wait: 0.0,
+                vy: 0.0,
+                health: kind.max_health(),
+                love: 0.0,
+                breed_cd: 0.0,
+                grow,
+                scale,
+            },
+        ))
+        .with_children(|a| {
+            a.spawn((
+                Mesh3d(assets.head[kind.index()].clone()),
+                MeshMaterial3d(assets.material[kind.index()].clone()),
+                Transform::from_xyz(body.x * 0.45, body.y * 0.2, 0.0),
+            ));
+        });
 }
 
 fn animal_ai(
@@ -244,6 +284,22 @@ fn animal_ai(
     let lure = player_q.single().ok().map(|tf| (tf.translation, inventory.selected_item()));
 
     for (mut transform, mut animal) in &mut animals {
+        // --- Breeding / growth timers ------------------------------
+        if animal.love > 0.0 {
+            animal.love -= dt;
+        }
+        if animal.breed_cd > 0.0 {
+            animal.breed_cd -= dt;
+        }
+        if animal.grow > 0.0 {
+            animal.grow -= dt;
+            let t = 1.0 - (animal.grow / BABY_GROW_TIME).clamp(0.0, 1.0);
+            animal.scale = BABY_SCALE + (1.0 - BABY_SCALE) * t;
+        } else {
+            animal.scale = 1.0;
+        }
+        transform.scale = Vec3::splat(animal.scale);
+
         if let Some((player_pos, Some(held))) = lure {
             if held == animal.kind.favorite_food()
                 && transform.translation.xz().distance(player_pos.xz()) < LURE_RADIUS
@@ -293,7 +349,7 @@ fn animal_ai(
                 break;
             }
         }
-        let half = animal.kind.body().y * 0.5;
+        let half = animal.kind.body().y * 0.5 * animal.scale;
         animal.vy -= 22.0 * dt;
         let mut ny = transform.translation.y + animal.vy * dt;
         if ny - half <= ground {
@@ -301,6 +357,46 @@ fn animal_ai(
             animal.vy = 0.0;
         }
         transform.translation.y = ny;
+    }
+}
+
+/// Two adult, same-kind animals in love mode standing close together spawn a
+/// baby, then go on cooldown. Capped per home chunk so herds can't explode.
+fn breed_animals(
+    mut commands: Commands,
+    assets: Res<AnimalAssets>,
+    mut animals: Query<(&Transform, &mut Animal), Without<Player>>,
+) {
+    let mut counts: HashMap<ChunkCoord, usize> = HashMap::new();
+    for (_, a) in &animals {
+        *counts.entry(a.home).or_default() += 1;
+    }
+
+    let mut births: Vec<(AnimalKind, ChunkCoord, Vec3)> = Vec::new();
+    let mut pairs = animals.iter_combinations_mut();
+    while let Some([(ta, mut a), (tb, mut b)]) = pairs.fetch_next() {
+        if a.kind != b.kind
+            || a.love <= 0.0
+            || b.love <= 0.0
+            || a.grow > 0.0
+            || b.grow > 0.0
+            || ta.translation.distance(tb.translation) > BREED_DIST
+        {
+            continue;
+        }
+        if counts.get(&a.home).copied().unwrap_or(0) >= MAX_PER_HOME {
+            continue;
+        }
+        a.love = 0.0;
+        b.love = 0.0;
+        a.breed_cd = BREED_COOLDOWN;
+        b.breed_cd = BREED_COOLDOWN;
+        *counts.entry(a.home).or_default() += 1;
+        births.push((a.kind, a.home, (ta.translation + tb.translation) * 0.5));
+    }
+
+    for (kind, home, pos) in births {
+        spawn_animal(&mut commands, &assets, kind, home, pos, true);
     }
 }
 
@@ -368,11 +464,17 @@ fn attack_animals(
         return;
     };
 
-    // Feed instead of hurt when holding the animal's favourite food.
+    // Feed instead of hurt when holding the animal's favourite food: heals, and
+    // either speeds a baby's growth or puts an adult into love mode.
     if inventory.selected_item() == Some(animal.kind.favorite_food()) {
         if inventory.take(animal.kind.favorite_food(), 1) == 1 {
             animal.health = animal.kind.max_health();
-            animal.vy = 2.5; // happy hop
+            animal.vy = 2.8; // happy hop
+            if animal.grow > 0.0 {
+                animal.grow = (animal.grow - 12.0).max(0.0);
+            } else if animal.breed_cd <= 0.0 {
+                animal.love = LOVE_TIME;
+            }
         }
         return;
     }
@@ -389,7 +491,13 @@ fn attack_animals(
     animal.vy = 3.5;
 
     if animal.health <= 0.0 {
-        let (pos, drops) = (tf.translation, animal.kind.drops());
+        // Babies just disappear; only grown animals leave drops.
+        let drops: &[(Item, u32)] = if animal.grow > 0.0 {
+            &[]
+        } else {
+            animal.kind.drops()
+        };
+        let pos = tf.translation;
         commands.entity(target).despawn();
         for &(item, amount) in drops {
             let jitter = Vec3::new(frand(&mut rng) - 0.5, 0.0, frand(&mut rng) - 0.5) * 0.8;

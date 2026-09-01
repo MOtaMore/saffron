@@ -72,7 +72,7 @@ fn save_choice(name: &str) {
     })
     .unwrap_or_default();
     if let Err(e) = std::fs::write(settings_path(), text) {
-        warn!("no se pudo guardar settings.json: {e}");
+        warn!("could not save settings.json: {e}");
     }
 }
 
@@ -177,8 +177,8 @@ fn spawn_skin_screen(mut commands: Commands) {
                 ..default()
             })
             .with_children(|row| {
-                skin_button(row, "Aplicar", SkinBtn::Apply, 150.0);
-                skin_button(row, "Cerrar", SkinBtn::Close, 150.0);
+                skin_button(row, "Apply", SkinBtn::Apply, 150.0);
+                skin_button(row, "Close", SkinBtn::Close, 150.0);
             });
         });
 }
