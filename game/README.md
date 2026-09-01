@@ -16,9 +16,11 @@ botones:
   `game/saves/<nombre>.json`). `✕` borra un mundo (dos clics: se pone rojo, luego
   confirma). Un `save.json` heredado se migra a `saves/Mundo.json` al arrancar.
 - **Multijugador** → listado de servidores, vacío al principio. **＋ Añadir
-  servidor** pide `IP:puerto`; se guarda en `game/servers.json`. Clic en una
-  fila para conectarte; el estado ("Conectando…", "No se pudo conectar: …")
-  aparece abajo. `✕` con doble clic borra la entrada.
+  servidor** abre un campo de texto (respeta la distribución del teclado, acepta
+  **Ctrl+V** para pegar); si omites el puerto se asume `:25599`
+  (`net::normalize_addr`). Se guarda en `game/servers.json`. Clic en una fila
+  para conectarte; el estado ("Conectando…", "No se pudo conectar: …") aparece
+  abajo. `✕` con doble clic borra la entrada.
 - **Configuración** → *Skin* (`skins.rs`), *Controles* (`keybinds.rs`),
   *Gráficos* (recorte de visión on/off, radio, brillo ambiental → `graphics.json`).
 - **Salir** → cierra el juego.

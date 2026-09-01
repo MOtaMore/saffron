@@ -686,7 +686,23 @@ impl NetClient {
 #[derive(Default)]
 struct ClientSlot(Option<NetClient>);
 
+/// Accept `host`, `host:port`, or a pasted `tcp://host:port`; default the port
+/// to [`DEFAULT_PORT`] when it is missing.
+pub fn normalize_addr(addr: &str) -> String {
+    let a = addr
+        .trim()
+        .trim_start_matches("tcp://")
+        .trim_start_matches("http://")
+        .trim_end_matches('/');
+    if a.contains(':') {
+        a.to_string()
+    } else {
+        format!("{a}:{DEFAULT_PORT}")
+    }
+}
+
 fn spawn_client(addr: String) -> NetClient {
+    let addr = normalize_addr(&addr);
     let (in_tx, in_rx) = channel::<ClientEvent>();
     let (out_tx, out_rx) = channel::<ClientMsg>();
 

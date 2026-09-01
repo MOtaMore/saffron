@@ -11,13 +11,13 @@
 use std::path::PathBuf;
 
 use bevy::input::ButtonState;
-use bevy::input::keyboard::KeyboardInput;
+use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::chunk_material::CutoutSettings;
 use crate::keybinds::OpenControlsButton;
-use crate::net::JoinServer;
+use crate::net::{JoinServer, normalize_addr};
 use crate::pause::GameFlow;
 use crate::save::{SAVES_DIR, StartWorld};
 use crate::skins::OpenSkinsButton;
@@ -932,10 +932,13 @@ fn sync_graphics_labels(
 
 // === Systems: text entry =========================================
 
+const ENTRY_MAX: usize = 64;
+
 fn text_entry_capture(
     mut entry: ResMut<TextEntry>,
     mut servers: ResMut<ServerList>,
     mut start: MessageWriter<StartWorld>,
+    keys: Res<ButtonInput<KeyCode>>,
     openers: Query<(&Interaction, &OpenEntry), Changed<Interaction>>,
     mut keebs: MessageReader<KeyboardInput>,
 ) {
@@ -951,19 +954,24 @@ fn text_entry_capture(
         return;
     };
 
+    let ctrl =
+        keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
+
     for ev in keebs.read() {
         if ev.state != ButtonState::Pressed {
             continue;
         }
-        match ev.key_code {
-            KeyCode::Escape => {
+        // Use the *logical* key so the layout decides the character — that is
+        // what makes `:` (Shift+; on many layouts, its own key on others) work.
+        match &ev.logical_key {
+            Key::Escape => {
                 entry.target = None;
                 break;
             }
-            KeyCode::Backspace => {
+            Key::Backspace => {
                 entry.buf.pop();
             }
-            KeyCode::Enter | KeyCode::NumpadEnter => {
+            Key::Enter => {
                 let raw = entry.buf.trim().to_string();
                 entry.target = None;
                 match target {
@@ -974,10 +982,8 @@ fn text_entry_capture(
                     }
                     EntryTarget::NewServer => {
                         if !raw.is_empty() {
-                            servers.servers.push(ServerItem {
-                                name: raw.clone(),
-                                addr: raw,
-                            });
+                            let addr = normalize_addr(&raw);
+                            servers.servers.push(ServerItem { name: raw, addr });
                             servers.save();
                             servers.dirty = true;
                         }
@@ -985,40 +991,35 @@ fn text_entry_capture(
                 }
                 break;
             }
-            _ => {
-                if let Some(ch) = key_to_char(ev.key_code, entry.buf.len()) {
-                    entry.buf.push(ch);
+            Key::Space => push_char(&mut entry.buf, ' '),
+            Key::Character(s) => {
+                if ctrl {
+                    if s.as_str().eq_ignore_ascii_case("v") {
+                        if let Some(text) = read_clipboard() {
+                            for ch in text.chars() {
+                                push_char(&mut entry.buf, ch);
+                            }
+                        }
+                    }
+                    continue; // ignore other Ctrl+<key> combos
+                }
+                for ch in s.chars() {
+                    push_char(&mut entry.buf, ch);
                 }
             }
+            _ => {}
         }
     }
 }
 
-/// Minimal printable-key mapping for the two text fields (letters, digits,
-/// space, `.` `:` `-` `_`). No shift handling — names/IPs don't need caps.
-fn key_to_char(key: KeyCode, len: usize) -> Option<char> {
-    if len >= 40 {
-        return None;
+fn push_char(buf: &mut String, ch: char) {
+    if !ch.is_control() && buf.chars().count() < ENTRY_MAX {
+        buf.push(ch);
     }
-    use KeyCode::*;
-    let c = match key {
-        KeyA => 'a', KeyB => 'b', KeyC => 'c', KeyD => 'd', KeyE => 'e',
-        KeyF => 'f', KeyG => 'g', KeyH => 'h', KeyI => 'i', KeyJ => 'j',
-        KeyK => 'k', KeyL => 'l', KeyM => 'm', KeyN => 'n', KeyO => 'o',
-        KeyP => 'p', KeyQ => 'q', KeyR => 'r', KeyS => 's', KeyT => 't',
-        KeyU => 'u', KeyV => 'v', KeyW => 'w', KeyX => 'x', KeyY => 'y',
-        KeyZ => 'z',
-        Digit0 | Numpad0 => '0', Digit1 | Numpad1 => '1', Digit2 | Numpad2 => '2',
-        Digit3 | Numpad3 => '3', Digit4 | Numpad4 => '4', Digit5 | Numpad5 => '5',
-        Digit6 | Numpad6 => '6', Digit7 | Numpad7 => '7', Digit8 | Numpad8 => '8',
-        Digit9 | Numpad9 => '9',
-        Space => ' ',
-        Period | NumpadDecimal => '.',
-        Minus | NumpadSubtract => '-',
-        Semicolon => ':',
-        _ => return None,
-    };
-    Some(c)
+}
+
+fn read_clipboard() -> Option<String> {
+    arboard::Clipboard::new().ok()?.get_text().ok()
 }
 
 fn sync_text_entry(
