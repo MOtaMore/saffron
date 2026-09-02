@@ -9,6 +9,7 @@ mod camera;
 mod chunk;
 mod chunk_material;
 mod container;
+mod editor;
 mod daynight;
 mod discord;
 mod farming;
@@ -28,6 +29,7 @@ mod scatter;
 mod skins;
 mod station;
 mod streaming;
+mod structure;
 mod survival;
 mod view;
 mod worldgen;
@@ -93,6 +95,8 @@ fn run_game(args: &[String]) -> AppExit {
         keybinds::KeybindsPlugin,
         menu::MenuPlugin,
         discord::DiscordPlugin,
+        editor::EditorPlugin,
+        structure::StructureLibraryPlugin,
     ))
     .add_systems(Startup, setup_environment)
     .add_systems(Update, set_window_icon);

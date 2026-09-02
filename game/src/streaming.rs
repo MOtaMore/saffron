@@ -52,8 +52,15 @@ impl Plugin for StreamingPlugin {
     }
 }
 
-pub fn setup_worldgen(mut commands: Commands, seed: Res<WorldSeed>) {
-    commands.insert_resource(WorldGenHandle(Arc::new(WorldGen::new(seed.0))));
+pub fn setup_worldgen(
+    mut commands: Commands,
+    seed: Res<WorldSeed>,
+    library: Option<Res<crate::structure::StructureLibrary>>,
+) {
+    let lib = library
+        .map(|l| l.0.clone())
+        .unwrap_or_else(|| Arc::new(crate::structure::Library::default()));
+    commands.insert_resource(WorldGenHandle(Arc::new(WorldGen::new(seed.0, lib))));
 }
 
 pub struct ChunkSlot {

@@ -31,7 +31,15 @@ impl Plugin for SavePlugin {
                 OnEnter(GameFlow::Playing),
                 apply_pending_load.before(setup_worldgen),
             )
-            .add_systems(Update, (handle_start_world, save_hotkey, handle_save_requests));
+            .add_systems(
+                Update,
+                (
+                    handle_start_world,
+                    save_hotkey,
+                    handle_save_requests,
+                    tick_net_quit,
+                ),
+            );
     }
 }
 
@@ -95,7 +103,7 @@ pub struct SaveRequest {
 }
 
 #[derive(Resource, Default)]
-struct PendingLoad(Option<SaveGame>);
+pub(crate) struct PendingLoad(Option<SaveGame>);
 
 // --- Serialized shape --------------------------------------------------
 
@@ -107,7 +115,7 @@ fn default_tod() -> f32 {
 }
 
 #[derive(Serialize, Deserialize)]
-struct SaveGame {
+pub(crate) struct SaveGame {
     seed: u32,
     player_pos: [f32; 3],
     player_fly: bool,
@@ -157,7 +165,7 @@ fn fresh_seed() -> u32 {
 // --- Load ------------------------------------------------------------
 
 #[allow(clippy::too_many_arguments)]
-fn apply_pending_load(
+pub(crate) fn apply_pending_load(
     mut commands: Commands,
     mut pending: ResMut<PendingLoad>,
     mut seed: ResMut<WorldSeed>,
@@ -275,10 +283,31 @@ fn save_hotkey(
     }
 }
 
+/// Delays `AppExit` for a few frames in client mode so `net::client_save_on_request`
+/// can flush the final `SaveState` frame to the server before the process ends.
+#[derive(Resource)]
+struct NetQuitDelay(u8);
+
+fn tick_net_quit(
+    delay: Option<ResMut<NetQuitDelay>>,
+    mut exit: MessageWriter<AppExit>,
+) {
+    let Some(mut delay) = delay else {
+        return;
+    };
+    if delay.0 == 0 {
+        exit.write(AppExit::Success);
+    } else {
+        delay.0 -= 1;
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn handle_save_requests(
     mut requests: MessageReader<SaveRequest>,
     mut exit: MessageWriter<AppExit>,
+    mut commands: Commands,
+    mode: Res<crate::net::NetMode>,
     seed: Res<WorldSeed>,
     world: Res<ChunkWorld>,
     chests: Res<ChestStores>,
@@ -296,17 +325,27 @@ fn handle_save_requests(
         requested = true;
         quit |= r.then_quit;
     }
-    if requested {
-        inventory.stow_all();
-        if let Ok((transform, body)) = player_q.single() {
-            let data = snapshot(
-                &seed, &world, &chests, &furnaces, &mills, &inventory, transform, body, &stats,
-                &clock,
-            );
-            match write_world(&current.0, &data) {
-                Ok(()) => info!("Game saved to {}", current.0.display()),
-                Err(e) => error!("Could not save: {e}"),
-            }
+    if !requested {
+        return;
+    }
+    inventory.stow_all();
+
+    // On a client the server owns the save (`net::client_save_on_request` pushes
+    // the state); don't write a local world file.
+    if *mode == crate::net::NetMode::Client {
+        if quit {
+            commands.insert_resource(NetQuitDelay(8));
+        }
+        return;
+    }
+
+    if let Ok((transform, body)) = player_q.single() {
+        let data = snapshot(
+            &seed, &world, &chests, &furnaces, &mills, &inventory, transform, body, &stats, &clock,
+        );
+        match write_world(&current.0, &data) {
+            Ok(()) => info!("Game saved to {}", current.0.display()),
+            Err(e) => error!("Could not save: {e}"),
         }
     }
     if quit {

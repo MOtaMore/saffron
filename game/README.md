@@ -5,10 +5,11 @@ con cámara ortográfica. Inspiración: exploración infinita de Minecraft +
 profundidad por capas de Dwarf Fortress.
 
 📖 **[RECIPES.md](RECIPES.md)** — todos los crafteos, fundidos y recolección.
+🧱 **[STRUCTURES.md](STRUCTURES.md)** — el editor de estructuras y el formato `.json` para compartir/implementar builds.
 
 ## Menú y guardado
 
-Al arrancar aparece el **menú inicial** (`GameFlow::Menu`, en `menu.rs`) con 4
+Al arrancar aparece el **menú inicial** (`GameFlow::Menu`, en `menu.rs`) con 5
 botones:
 
 - **Jugar** → listado de mundos. Cada `*.json` de `game/saves/` es un mundo;
@@ -21,6 +22,7 @@ botones:
   (`net::normalize_addr`). Se guarda en `game/servers.json`. Clic en una fila
   para conectarte; el estado ("Conectando…", "No se pudo conectar: …") aparece
   abajo. `✕` con doble clic borra la entrada.
+- **Structure Editor** → editor de estructuras aparte (`editor.rs`). Ver abajo.
 - **Configuración** → *Skin* (`skins.rs`), *Controles* (`keybinds.rs`),
   *Gráficos* (recorte de visión on/off, radio, brillo ambiental → `graphics.json`).
 - **Salir** → cierra el juego.
@@ -40,16 +42,25 @@ hornos, y posición del jugador. Cada mundo en su propio archivo bajo `saves/`.
 
 TCP casero, sin dependencias. **Qué se sincroniza:** la semilla del mundo, el
 overlay de ediciones de bloques (construir juntos), la posición/rotación de cada
-jugador, y el chat. **Qué todavía no:** inventario, cofres/hornos, animales,
-items tirados, pesca.
+jugador, y el chat. **Qué todavía no se sincroniza en vivo:** cofres/hornos,
+animales, items tirados, pesca.
 
 - **Unirse**: menú **Multijugador** → añade `IP:puerto` y entra. Se guardan en
   `game/servers.json`. También `game --connect <host:puerto>` desde consola.
 - **Modo escucha (Host)**: el botón del menú se retiró; la maquinaria
   `NetMode::Host` sigue en el código para reactivarla más adelante.
 - **Modo servidor** (dedicado, tipo Minecraft): `game --server`. Config en
-  `game/server.json` (`port`, `seed`, `motd`); el mundo se guarda solo cada 30 s
-  en `game/server_world.json` y se recarga al reiniciar. No hay jugador local.
+  `game/server.json` (`port`, `seed`, `motd`); todo se guarda en
+  `game/server_world.json` y se recarga al reiniciar. No hay jugador local.
+- **Guardado del jugador en el servidor** (`ClientMsg::SaveState` /
+  `ServerMsg::Welcome`, `PlayerRecord`): el cliente envía su **inventario +
+  vida/hambre/sed + posición** al servidor cada 10 s, con F5, y al *Guardar y
+  salir* (con un margen de ~8 frames para vaciar el socket). El servidor los
+  guarda por **nombre de jugador** (`whoami()` → `USERNAME`/`USER`) en
+  `server_world.json` (autosave 30 s + al desconectarse cada jugador). Al volver
+  a conectarte con el mismo nombre te devuelve tu inventario, stats y posición.
+  *Limitación:* dos jugadores con el mismo nombre de usuario comparten ranura.
+  En modo cliente **no** se escribe `saves/*.json` local: manda el servidor.
 - **Chat**: `Intro` abre la línea de escritura, `Intro` envía, `Esc` cancela.
 
 ## Skins (`skins.rs`)
@@ -58,6 +69,51 @@ Botón **Skin** en Configuración y en el menú de pausa. Muestra una vista prev
 permite recorrer los `*.png` de `assets/textures/player_skin/` con ◀ ▶. La
 elección se guarda en `game/settings.json` y la llevan tanto tu modelo como los
 avatares de los demás jugadores.
+
+## Structure Editor (`editor.rs`)
+
+Estado propio (`GameFlow::Editor`, botón **Structure Editor** en el menú) — **no
+es** la partida: sin jugador, sin supervivencia, sin hotbar. Cámara y HUD
+propios, para diseñar estructuras y exportarlas.
+
+- **Cámara libre 3D**: clic derecho para mirar, **WASD** volar,
+  **Espacio/Ctrl** subir/bajar, **Shift** más rápido, rueda = velocidad.
+- **Content browser** (panel izquierdo): un swatch por bloque y por prop con
+  modelo (banco, cofre, horno, molino, antorcha) + brocha **Erase**.
+- **Herramienta Build**: clic izquierdo coloca el bloque de la brocha en la cara
+  apuntada (o a 8 m en el aire); **Alt+clic** o la brocha *Erase* lo quita.
+- **Herramienta Select**: clic izquierdo elige un bloque · **Shift+clic** lo
+  añade/quita del grupo · **Ctrl+clic** selecciona **todo**. **Flechas** y
+  **RePág/AvPág** mueven la selección una celda; **Supr** la borra. Botones
+  `Select all` / `Clear sel` / `Delete`.
+- **Textured**: alterna entre la textura real del atlas y color plano (solo
+  bloques normales; los props siempre muestran su GLB). La preview con textura
+  es aproximada — el juego base la coloca bien al estampar.
+- **Save file** → `game/structures/<nombre>.json` · **Copy/Paste JSON**
+  (portapapeles) · lista de `structures/*.json` (clic → cargar y seguir
+  editando). `Rename` para el nombre. `Esc` vuelve al menú.
+- Los props con modelo se cargan de verdad (GLB); los bloques se dibujan con
+  color plano (la textura real la pone el juego base al estampar).
+- **Regla de aparición** (`spawn` en el `.json`, controles `w±` / `sink±` en el
+  panel): `weight` (0 = no aparece), `min_y`/`max_y`, `max_slope`, `sink`,
+  `clear`, `fill_below`.
+- **Devs**: `structure::{load_structure, stamp_structure}` (y `Structure`,
+  `from_cells`) son públicas. Formato en **[STRUCTURES.md](STRUCTURES.md)**.
+
+### Aparición en la generación del mundo
+
+`structure::StructureLibraryPlugin` escanea `game/assets/structures/*.json` +
+`game/structures/*.json` al arrancar y mete un `StructureLibrary` (`Arc<Library>`)
+que se pasa a `WorldGen`. En `worldgen::generate`, `stamp_structures` divide el
+mundo en **regiones de 4×4 chunks**; cada región tira un dado determinista
+(semilla + coords, `STRUCT_PER_MIL ≈ 13 %`), elige una estructura por peso, la
+ancla dentro de la región (nunca cruza a otra), comprueba pendiente/altura y la
+estampa por rebanadas en cada chunk. **Todo es determinista desde la semilla** →
+cada cliente y cada recarga generan lo mismo, sin red ni guardado. Las
+modificaciones del jugador se guardan encima (`ChunkWorld.edits`) como con el
+terreno. Para que una estructura aparezca: `spawn.weight > 0` y ponla en
+`game/assets/structures/` (commiteada; en multijugador todas las máquinas deben
+tener los mismos archivos).
 
 ## Discord Rich Presence (`discord.rs`)
 
@@ -345,6 +401,8 @@ cargo run -- --connect 127.0.0.1:25599
 | `menu.rs` | Front-end: Jugar (mundos) / Multijugador (servidores) / Configuración / Salir |
 | `keybinds.rs` | Controles remapeables (`Action` → `KeyCode`) + pantalla de rebind |
 | `skins.rs` | Catálogo de skins + pantalla para verlas y elegirlas |
+| `editor.rs` | Modo Structure Editor: estado propio, cámara libre, browser de contenido, exportar `.json` |
+| `structure.rs` | Formato `.json` de estructuras + `load_structure` / `stamp_structure` (API para el juego base) |
 | `discord.rs` | Discord Rich Presence en hilo aparte (estado del jugador) |
 | `hud.rs` | Lectura de depuración en pantalla |
 

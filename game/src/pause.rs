@@ -28,6 +28,8 @@ pub enum GameFlow {
     #[default]
     Menu,
     Playing,
+    /// The standalone structure editor (`editor.rs`) — no player, no survival.
+    Editor,
 }
 
 #[derive(Resource, Default)]
@@ -125,7 +127,7 @@ fn on_escape(
     mut root: Query<&mut Visibility, With<PauseRoot>>,
 ) {
     if !keys.just_pressed(KeyCode::Escape)
-        || matches!(flow.get(), GameFlow::Menu)
+        || !matches!(flow.get(), GameFlow::Playing)
         || chat.capturing()
     {
         return;

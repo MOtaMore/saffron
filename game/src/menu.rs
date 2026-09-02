@@ -79,6 +79,7 @@ struct ScreenOf(MenuNav);
 enum RootButton {
     Play,
     Multiplayer,
+    Editor,
     Settings,
     Quit,
 }
@@ -355,6 +356,7 @@ fn spawn_menu(mut commands: Commands) {
         ));
         button(root, "Play", RootButton::Play);
         button(root, "Multiplayer", RootButton::Multiplayer);
+        button(root, "Structure Editor", RootButton::Editor);
         button(root, "Settings", RootButton::Settings);
         button(root, "Quit", RootButton::Quit);
     });
@@ -532,6 +534,7 @@ fn root_buttons(
     mut exit: MessageWriter<AppExit>,
     mut worlds: ResMut<WorldList>,
     mut servers: ResMut<ServerList>,
+    mut flow: ResMut<NextState<GameFlow>>,
     buttons: Query<(&Interaction, &RootButton), Changed<Interaction>>,
 ) {
     for (interaction, btn) in &buttons {
@@ -547,6 +550,7 @@ fn root_buttons(
                 servers.dirty = true;
                 *nav = MenuNav::Servers;
             }
+            RootButton::Editor => flow.set(GameFlow::Editor),
             RootButton::Settings => *nav = MenuNav::Settings,
             RootButton::Quit => {
                 exit.write(AppExit::Success);

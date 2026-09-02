@@ -21,7 +21,7 @@ impl Plugin for HudPlugin {
 }
 
 #[derive(Component)]
-struct HudText;
+pub struct HudText;
 
 fn spawn_hud(mut commands: Commands) {
     commands.spawn((

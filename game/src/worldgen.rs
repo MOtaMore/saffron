@@ -71,6 +71,7 @@ impl Default for WorldSeed {
 pub struct WorldGenHandle(pub Arc<WorldGen>);
 
 pub struct WorldGen {
+    seed: u32,
     height: Fbm<Perlin>,
     mtn_mask: Fbm<Perlin>,
     mountain: Fbm<Perlin>,
@@ -84,7 +85,25 @@ pub struct WorldGen {
     cave_a: Perlin,
     cave_b: Perlin,
     cavern: Perlin,
+    /// Structures with `spawn.weight > 0`, stamped into chunks during `generate`.
+    structures: Arc<crate::structure::Library>,
     pub sea_level: i32,
+}
+
+/// Chunks (per axis) in one structure-placement region. A region gets at most
+/// one structure, anchored so its footprint stays inside the region.
+const REGION_CHUNKS: i32 = 4;
+/// Regions that attempt a structure, per mille (before slope / Y-range checks).
+const STRUCT_PER_MIL: u64 = 130;
+
+fn region_hash(seed: u32, rx: i32, ry: i32) -> u64 {
+    let mut z = (seed as u64)
+        .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+        ^ (rx as u64).wrapping_mul(0xD1B5_4A32_D192_ED03)
+        ^ (ry as u64).wrapping_mul(0xA076_1D64_78BD_642F);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
 }
 
 /// One resolved terrain column.
@@ -96,7 +115,7 @@ struct Column {
 }
 
 impl WorldGen {
-    pub fn new(seed: u32) -> Self {
+    pub fn new(seed: u32, structures: Arc<crate::structure::Library>) -> Self {
         let height = Fbm::<Perlin>::new(seed)
             .set_octaves(5)
             .set_frequency(0.0042)
@@ -119,6 +138,7 @@ impl WorldGen {
             .set_octaves(2)
             .set_frequency(0.0040);
         Self {
+            seed,
             height,
             mtn_mask,
             mountain,
@@ -132,6 +152,7 @@ impl WorldGen {
             cave_a: Perlin::new(seed.wrapping_add(601)),
             cave_b: Perlin::new(seed.wrapping_add(619)),
             cavern: Perlin::new(seed.wrapping_add(637)),
+            structures,
             sea_level: 48,
         }
     }
@@ -332,7 +353,96 @@ impl WorldGen {
             }
         }
 
+        self.stamp_structures(coord, &mut data);
         data
+    }
+
+    /// Stamps the slice of any library structure whose footprint overlaps this
+    /// chunk. Fully deterministic from the seed, so every client (and reloads)
+    /// generates the same layout without any networking or save state.
+    fn stamp_structures(&self, coord: ChunkCoord, data: &mut ChunkData) {
+        let lib = &*self.structures;
+        if lib.is_empty() {
+            return;
+        }
+        let (rx, ry) = (
+            coord.x.div_euclid(REGION_CHUNKS),
+            coord.y.div_euclid(REGION_CHUNKS),
+        );
+        let h = region_hash(self.seed, rx, ry);
+        if h % 1000 >= STRUCT_PER_MIL {
+            return;
+        }
+        let Some(s) = lib.pick(((h >> 12) & 0xFFFF) as f32 / 65536.0) else {
+            return;
+        };
+        let [sx, sy, sz] = s.size;
+        if sx <= 0 || sy <= 0 || sz <= 0 {
+            return;
+        }
+
+        // Anchor inside the region so the footprint never crosses into another.
+        let span = REGION_CHUNKS * CHUNK_SIZE;
+        let rmin_x = rx * span;
+        let rmin_z = ry * span;
+        let ax = rmin_x + ((h >> 24) % (span - sx).max(1) as u64) as i32;
+        let az = rmin_z + ((h >> 40) % (span - sz).max(1) as u64) as i32;
+
+        // Surface + slope gate over the footprint.
+        let hs = [
+            self.surface_height(ax, az),
+            self.surface_height(ax + sx - 1, az),
+            self.surface_height(ax, az + sz - 1),
+            self.surface_height(ax + sx - 1, az + sz - 1),
+            self.surface_height(ax + sx / 2, az + sz / 2),
+        ];
+        let lo = *hs.iter().min().unwrap();
+        let hi = *hs.iter().max().unwrap();
+        let r = &s.spawn;
+        if hi - lo > r.max_slope || lo < r.min_y || lo > r.max_y {
+            return;
+        }
+        let ay = (lo - r.sink).max(1);
+
+        let (cx, cz) = (coord.x * CHUNK_SIZE, coord.y * CHUNK_SIZE);
+        let local = |wx: i32, wz: i32| -> Option<(i32, i32)> {
+            let (lx, lz) = (wx - cx, wz - cz);
+            ((0..CHUNK_SIZE).contains(&lx) && (0..CHUNK_SIZE).contains(&lz)).then_some((lx, lz))
+        };
+        let put = |data: &mut ChunkData, lx: i32, wy: i32, lz: i32, b: Block| {
+            if (1..CHUNK_HEIGHT).contains(&wy) {
+                data.set(lx, wy, lz, b);
+            }
+        };
+
+        for wx in ax..ax + sx {
+            for wz in az..az + sz {
+                let Some((lx, lz)) = local(wx, wz) else {
+                    continue;
+                };
+                if r.clear {
+                    for wy in ay..(ay + sy) {
+                        put(data, lx, wy, lz, Block::Air);
+                    }
+                }
+                if r.fill_below {
+                    let ground = self.surface_height(wx, wz);
+                    let mut wy = ay - 1;
+                    while wy >= 1 && wy >= ground {
+                        put(data, lx, wy, lz, Block::Dirt);
+                        wy -= 1;
+                    }
+                }
+            }
+        }
+        for &([bx, by, bz], b) in &s.blocks {
+            if b == Block::Air {
+                continue;
+            }
+            if let Some((lx, lz)) = local(ax + bx, az + bz) {
+                put(data, lx, ay + by, lz, b);
+            }
+        }
     }
 }
 
@@ -382,4 +492,64 @@ fn hash2(x: i32, z: i32) -> f32 {
     h = h.wrapping_mul(0x297a_2d39);
     h ^= h >> 15;
     (h as f32) / (u32::MAX as f32)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::structure::{Library, SpawnRule, Structure};
+
+    fn lib_with_one() -> Library {
+        let s = Structure {
+            format: crate::structure::FORMAT.into(),
+            version: 1,
+            name: "t".into(),
+            size: [6, 5, 6],
+            author: String::new(),
+            notes: String::new(),
+            spawn: SpawnRule {
+                weight: 10.0,
+                min_y: 0,
+                max_y: 250,
+                max_slope: 200,
+                ..SpawnRule::default()
+            },
+            blocks: (0..6)
+                .flat_map(|x| (0..6).map(move |z| ([x, 0, z], Block::Stone)))
+                .chain([([2, 1, 2], Block::Wood), ([2, 2, 2], Block::WoodPlanks)])
+                .collect(),
+        };
+        Library::build([s])
+    }
+
+    #[test]
+    fn structures_stamp_without_panic_and_are_deterministic() {
+        use std::sync::Arc;
+        let wg = WorldGen::new(0x1234, Arc::new(lib_with_one()));
+        let mut found = 0usize;
+        for cx in -14..14 {
+            for cy in -14..14 {
+                let d = wg.generate(IVec2::new(cx, cy));
+                for y in 1..CHUNK_HEIGHT {
+                    for z in 0..CHUNK_SIZE {
+                        for x in 0..CHUNK_SIZE {
+                            if matches!(d.get(x, y, z), Block::WoodPlanks) {
+                                found += 1;
+                            }
+                        }
+                    }
+                }
+                // Regenerating the same chunk must be byte-identical.
+                let d2 = wg.generate(IVec2::new(cx, cy));
+                for y in 0..CHUNK_HEIGHT {
+                    for z in 0..CHUNK_SIZE {
+                        for x in 0..CHUNK_SIZE {
+                            assert_eq!(d.get(x, y, z), d2.get(x, y, z));
+                        }
+                    }
+                }
+            }
+        }
+        assert!(found > 0, "no structure blocks generated");
+    }
 }

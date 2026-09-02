@@ -209,6 +209,10 @@ struct BarFill(Bar);
 #[derive(Component)]
 struct DeathFlash;
 
+/// Root of the health/hunger/thirst row — hidden in the creative editor.
+#[derive(Component)]
+pub struct SurvivalUi;
+
 const BAR_W: f32 = 132.0;
 const BAR_H: f32 = 11.0;
 /// Width of the hotbar (10 × 44 px cells + 9 × 4 px gaps), so the stat bars sit
@@ -242,14 +246,17 @@ fn spawn_survival_ui(mut commands: Commands) {
     // A row the width of the hotbar, centred just above it: Vida on the left end,
     // Hambre + Sed stacked on the right end.
     commands
-        .spawn(Node {
-            position_type: PositionType::Absolute,
-            left: Val::Px(0.0),
-            right: Val::Px(0.0),
-            bottom: Val::Px(64.0),
-            justify_content: JustifyContent::Center,
-            ..default()
-        })
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(0.0),
+                right: Val::Px(0.0),
+                bottom: Val::Px(64.0),
+                justify_content: JustifyContent::Center,
+                ..default()
+            },
+            SurvivalUi,
+        ))
         .with_children(|center| {
             center
                 .spawn(Node {

@@ -51,7 +51,13 @@ fn load_sources(mut commands: Commands, server: Res<AssetServer>) {
     });
 }
 
+/// The assembled block atlas image, once ready. Used by the structure editor to
+/// draw textured preview cubes.
+#[derive(Resource)]
+pub struct BlockAtlasImage(pub Handle<Image>);
+
 fn assemble_atlas(
+    mut commands: Commands,
     mut sources: ResMut<AtlasSources>,
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<ChunkMaterial>>,
@@ -111,9 +117,10 @@ fn assemble_atlas(
     }
     if let Some(gh) = glass_handle {
         if let Some(mut material) = materials.get_mut(&gh.0) {
-            material.base.base_color_texture = Some(atlas_handle);
+            material.base.base_color_texture = Some(atlas_handle.clone());
         }
     }
+    commands.insert_resource(BlockAtlasImage(atlas_handle));
     sources.done = true;
     info!("Block atlas assembled");
 }

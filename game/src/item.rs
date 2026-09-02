@@ -1063,15 +1063,22 @@ struct HotbarSwatch(usize);
 #[derive(Component)]
 struct HotbarCount(usize);
 
+/// Root of the hotbar row — hidden while the structure editor is open.
+#[derive(Component)]
+pub struct HotbarRoot;
+
 fn spawn_hotbar(mut commands: Commands) {
     commands
-        .spawn(Node {
-            position_type: PositionType::Absolute,
-            bottom: Val::Px(12.0),
-            width: Val::Percent(100.0),
-            justify_content: JustifyContent::Center,
-            ..default()
-        })
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                bottom: Val::Px(12.0),
+                width: Val::Percent(100.0),
+                justify_content: JustifyContent::Center,
+                ..default()
+            },
+            HotbarRoot,
+        ))
         .with_children(|bar| {
             bar.spawn(Node {
                 flex_direction: FlexDirection::Row,

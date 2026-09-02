@@ -118,7 +118,7 @@ fn setup_prop_assets(
     });
 }
 
-fn model_path(kind: Block) -> Option<&'static str> {
+pub fn model_path(kind: Block) -> Option<&'static str> {
     match kind {
         Block::Workbench => Some("models/WorkstationT1.glb"),
         Block::Chest => Some("models/ChestT1.glb"),

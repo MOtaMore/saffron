@@ -26,9 +26,12 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::block::Block;
+use crate::item::{CRAFT_SLOTS, HOTBAR, Inventory, SLOTS, Stack};
 use crate::pause::{GameFlow, Paused};
 use crate::player::{PLAYER_MODEL, PLAYER_MODEL_DROP, PLAYER_MODEL_SCALE, PendingPlayerSpawn, Player};
+use crate::save::SaveRequest;
 use crate::streaming::ChunkWorld;
+use crate::survival::Stats;
 use crate::worldgen::WorldSeed;
 
 pub const DEFAULT_PORT: u16 = 25599;
@@ -80,6 +83,14 @@ enum ClientMsg {
     Move { pos: [f32; 3], yaw: f32, moving: bool },
     SetBlock { pos: [i32; 3], block: Block },
     Chat { text: String },
+    /// Periodic (and on save/quit) snapshot so the server can persist this
+    /// player's inventory + stats + position across reconnects.
+    SaveState {
+        inv: Vec<Option<Stack>>,
+        selected: usize,
+        pos: [f32; 3],
+        stats: [f32; 3],
+    },
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -89,6 +100,14 @@ enum ServerMsg {
         seed: u32,
         spawn: [f32; 3],
         edits: Vec<([i32; 3], Block)>,
+        /// Saved inventory for a returning player (`None` = brand-new).
+        #[serde(default)]
+        inv: Option<Vec<Option<Stack>>>,
+        #[serde(default)]
+        selected: usize,
+        /// Saved `[health, hunger, thirst]` for a returning player.
+        #[serde(default)]
+        stats: Option<[f32; 3]>,
     },
     Joined {
         id: PlayerId,
@@ -200,11 +219,17 @@ impl Plugin for NetPlugin {
                     .run_if(in_state(GameFlow::Menu)),
             )
             .add_systems(
+                OnEnter(GameFlow::Playing),
+                apply_net_join.after(crate::save::apply_pending_load),
+            )
+            .add_systems(
                 Update,
                 (
                     client_game_pump,
                     client_replicate_edits,
                     client_send_move,
+                    client_send_state,
+                    client_save_on_request,
                     move_remote_players,
                     apply_remote_skins,
                 )
@@ -237,6 +262,8 @@ struct NetServer {
     inbound: Receiver<Inbound>,
     conns: HashMap<PlayerId, Conn>,
     edit_shadow: HashMap<IVec3, Block>,
+    /// Persisted per-player state, keyed by player name.
+    players: HashMap<String, PlayerRecord>,
     autosave: f32,
     /// Host mode only: last transform we sent for the local player.
     host_mv: Option<([f32; 3], f32, bool)>,
@@ -303,27 +330,45 @@ fn server_world_path() -> PathBuf {
     PathBuf::from("server_world.json")
 }
 
+/// Per-player state the dedicated server keeps so inventory + stats survive a
+/// disconnect. Keyed by the (sanitised) player name — the only stable id we
+/// have, so two players sharing a username would share a slot.
+#[derive(Serialize, Deserialize, Clone)]
+struct PlayerRecord {
+    name: String,
+    inv: Vec<Option<Stack>>,
+    selected: usize,
+    pos: [f32; 3],
+    stats: [f32; 3],
+}
+
 #[derive(Serialize, Deserialize, Default)]
 struct ServerWorld {
     edits: Vec<([i32; 3], Block)>,
+    #[serde(default)]
+    players: Vec<PlayerRecord>,
 }
 
-fn load_server_edits() -> HashMap<IVec3, Block> {
-    std::fs::read_to_string(server_world_path())
+fn load_server_world() -> (HashMap<IVec3, Block>, HashMap<String, PlayerRecord>) {
+    let Some(w) = std::fs::read_to_string(server_world_path())
         .ok()
         .and_then(|t| serde_json::from_str::<ServerWorld>(&t).ok())
-        .map(|w| {
-            w.edits
-                .into_iter()
-                .map(|([x, y, z], b)| (IVec3::new(x, y, z), b))
-                .collect()
-        })
-        .unwrap_or_default()
+    else {
+        return (HashMap::new(), HashMap::new());
+    };
+    let edits = w
+        .edits
+        .into_iter()
+        .map(|([x, y, z], b)| (IVec3::new(x, y, z), b))
+        .collect();
+    let players = w.players.into_iter().map(|r| (r.name.clone(), r)).collect();
+    (edits, players)
 }
 
-fn save_server_edits(edits: &HashMap<IVec3, Block>) {
+fn save_server_world(edits: &HashMap<IVec3, Block>, players: &HashMap<String, PlayerRecord>) {
     let data = ServerWorld {
         edits: edits.iter().map(|(p, b)| ([p.x, p.y, p.z], *b)).collect(),
+        players: players.values().cloned().collect(),
     };
     let _ = std::fs::write(
         server_world_path(),
@@ -343,13 +388,19 @@ fn server_start_listener(
     }
     let port = config.as_deref().map(|c| c.port).unwrap_or(DEFAULT_PORT);
 
-    // The dedicated server keeps the authoritative world in `edits`.
+    // The dedicated server keeps the authoritative world in `edits` + saved
+    // per-player state.
+    let mut players: HashMap<String, PlayerRecord> = HashMap::new();
     if *mode == NetMode::Server {
-        let saved = load_server_edits();
-        if !saved.is_empty() {
-            info!("server world: {} edited blocks", saved.len());
-            world.edits = saved;
+        let (saved_edits, saved_players) = load_server_world();
+        if !saved_edits.is_empty() {
+            info!("server world: {} edited blocks", saved_edits.len());
+            world.edits = saved_edits;
         }
+        if !saved_players.is_empty() {
+            info!("server world: {} saved players", saved_players.len());
+        }
+        players = saved_players;
     }
 
     let listener = match TcpListener::bind(("0.0.0.0", port)) {
@@ -361,6 +412,7 @@ fn server_start_listener(
                 inbound: channel().1,
                 conns: HashMap::new(),
                 edit_shadow: HashMap::new(),
+                players,
                 autosave: 0.0,
                 host_mv: None,
             });
@@ -377,6 +429,7 @@ fn server_start_listener(
         inbound: rx,
         conns: HashMap::new(),
         edit_shadow: world.edits.clone(),
+        players,
         autosave: 0.0,
         host_mv: None,
     });
@@ -437,6 +490,7 @@ fn default_spawn() -> [f32; 3] {
 fn server_pump(
     mut slot: NonSendMut<ServerSlot>,
     seed: Res<WorldSeed>,
+    mode: Res<NetMode>,
     mut world: ResMut<ChunkWorld>,
     mut chat: ResMut<ChatLog>,
 ) {
@@ -465,6 +519,10 @@ fn server_pump(
                 if let Some(c) = server.conns.remove(&id) {
                     server.broadcast(&ServerMsg::Left { id });
                     chat.push_line(format!("{} left", c.name));
+                    // Flush to disk so a crash right after doesn't lose them.
+                    if *mode == NetMode::Server {
+                        save_server_world(&world.edits, &server.players);
+                    }
                 }
             }
             Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,
@@ -483,16 +541,23 @@ fn handle_client_msg(
     match msg {
         ClientMsg::Hello { name, skin } => {
             let name = sanitize(&name, 24);
-            // Tell the newcomer about the world and everyone already here.
+            // Returning player? Hand back their saved inventory / stats / spot.
+            let record = server.players.get(&name).cloned();
+            if record.is_some() {
+                info!("{name} reconnected — restoring saved inventory");
+            }
             let welcome = ServerMsg::Welcome {
                 id,
                 seed: seed.0,
-                spawn: default_spawn(),
+                spawn: record.as_ref().map(|r| r.pos).unwrap_or_else(default_spawn),
                 edits: world
                     .edits
                     .iter()
                     .map(|(p, b)| ([p.x, p.y, p.z], *b))
                     .collect(),
+                inv: record.as_ref().map(|r| r.inv.clone()),
+                selected: record.as_ref().map(|r| r.selected).unwrap_or(0),
+                stats: record.as_ref().map(|r| r.stats),
             };
             let existing: Vec<ServerMsg> = server
                 .conns
@@ -552,6 +617,31 @@ fn handle_client_msg(
                 text: text.clone(),
             });
             chat.push_line(format!("<{from}> {text}"));
+        }
+        ClientMsg::SaveState {
+            inv,
+            selected,
+            pos,
+            stats,
+        } => {
+            let Some(name) = server
+                .conns
+                .get(&id)
+                .filter(|c| c.hello)
+                .map(|c| c.name.clone())
+            else {
+                return;
+            };
+            server.players.insert(
+                name.clone(),
+                PlayerRecord {
+                    name,
+                    inv,
+                    selected,
+                    pos,
+                    stats,
+                },
+            );
         }
     }
 }
@@ -647,7 +737,7 @@ fn server_autosave(
     server.autosave += time.delta_secs();
     if server.autosave >= SERVER_AUTOSAVE_SECS {
         server.autosave = 0.0;
-        save_server_edits(&world.edits);
+        save_server_world(&world.edits, &server.players);
     }
 }
 
@@ -795,6 +885,9 @@ fn client_connect_pump(
                 seed: world_seed,
                 spawn,
                 edits,
+                inv,
+                selected,
+                stats,
             })) => {
                 client.my_id = id;
                 seed.0 = world_seed;
@@ -808,6 +901,11 @@ fn client_connect_pump(
                 commands.insert_resource(PendingPlayerSpawn {
                     pos: Vec3::from_array(spawn),
                 });
+                commands.insert_resource(PendingNetJoin {
+                    inv,
+                    selected,
+                    stats,
+                });
                 client.state = ClientState::Playing;
                 next.set(GameFlow::Playing);
             }
@@ -815,6 +913,101 @@ fn client_connect_pump(
             Ok(ClientEvent::Msg(_)) => {}
             Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,
         }
+    }
+}
+
+/// Carries the saved inventory/stats from a `Welcome` until `OnEnter(Playing)`,
+/// where `apply_net_join` writes them into the live resources (after
+/// `save::apply_pending_load`, which would otherwise reset stats).
+#[derive(Resource)]
+struct PendingNetJoin {
+    inv: Option<Vec<Option<Stack>>>,
+    selected: usize,
+    stats: Option<[f32; 3]>,
+}
+
+fn apply_net_join(
+    join: Option<Res<PendingNetJoin>>,
+    mode: Res<NetMode>,
+    mut inventory: ResMut<Inventory>,
+    mut stats: ResMut<Stats>,
+    mut commands: Commands,
+) {
+    if *mode != NetMode::Client {
+        return;
+    }
+    let Some(join) = join else {
+        return;
+    };
+    match &join.inv {
+        Some(slots) => {
+            inventory.slots = slots.clone();
+            inventory.slots.resize(SLOTS, None);
+            inventory.selected = join.selected.min(HOTBAR - 1);
+        }
+        // Brand-new player on this server: always start from a clean slate so a
+        // prior single-player inventory doesn't leak in.
+        None => *inventory = Inventory::default(),
+    }
+    inventory.carried = None;
+    inventory.craft = [None; CRAFT_SLOTS];
+    if let Some([h, hu, th]) = join.stats {
+        stats.health = h;
+        stats.hunger = hu;
+        stats.thirst = th;
+        stats.death_flash = 0.0;
+    }
+    commands.remove_resource::<PendingNetJoin>();
+}
+
+/// Every few seconds (and on save/quit) push our inventory + stats + position to
+/// the server so a reconnect restores them.
+fn client_send_state(
+    time: Res<Time>,
+    mut acc: Local<f32>,
+    slot: NonSend<ClientSlot>,
+    inventory: Res<Inventory>,
+    stats: Res<Stats>,
+    player_q: Query<&Transform, With<Player>>,
+) {
+    let Some(client) = slot.0.as_ref() else {
+        return;
+    };
+    *acc += time.delta_secs();
+    if *acc < 10.0 {
+        return;
+    }
+    *acc = 0.0;
+    if let Ok(tf) = player_q.single() {
+        client.send(state_msg(&inventory, &stats, tf));
+    }
+}
+
+/// F5 / "Save and quit" in client mode: push one snapshot immediately.
+fn client_save_on_request(
+    mut requests: MessageReader<SaveRequest>,
+    slot: NonSend<ClientSlot>,
+    inventory: Res<Inventory>,
+    stats: Res<Stats>,
+    player_q: Query<&Transform, With<Player>>,
+) {
+    if requests.read().count() == 0 {
+        return;
+    }
+    let Some(client) = slot.0.as_ref() else {
+        return;
+    };
+    if let Ok(tf) = player_q.single() {
+        client.send(state_msg(&inventory, &stats, tf));
+    }
+}
+
+fn state_msg(inventory: &Inventory, stats: &Stats, tf: &Transform) -> ClientMsg {
+    ClientMsg::SaveState {
+        inv: inventory.slots.clone(),
+        selected: inventory.selected,
+        pos: tf.translation.to_array(),
+        stats: [stats.health, stats.hunger, stats.thirst],
     }
 }
 
