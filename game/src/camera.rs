@@ -23,7 +23,10 @@ impl Plugin for CameraPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, spawn_camera).add_systems(
             Update,
-            (camera_input.run_if(crate::pause::not_paused), camera_follow).chain(),
+            (camera_input.run_if(crate::pause::not_paused), camera_follow)
+                .chain()
+                // Suspended while the first-person view drives the camera.
+                .run_if(crate::firstperson::eagle_view),
         );
     }
 }

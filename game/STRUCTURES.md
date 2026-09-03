@@ -110,6 +110,18 @@ To make a design spawn: open it in the editor, bump `w+`, `Save file`, then move
 the `.json` to `game/assets/structures/`. Tune the global rate in
 `worldgen::STRUCT_PER_MIL` / `REGION_CHUNKS`.
 
+### Ruined cities — not a library structure
+
+`worldgen::stamp_ruins` is a separate, hardcoded procedural pass (no `.json`): a
+grid of **manzanas** (city blocks) separated by streets, each holding 3–7 large
+half-collapsed Soviet-style concrete apartment blocks (15..22 wide, 4..12
+storeys) with cramped khrushchyovka-style partitioned interiors, built from the
+masonry blocks. On `CITY_REGION_CHUNKS = 16`-chunk regions at `CITY_PER_MIL ≈
+9 %`, on dry land (per-building footing check). Same determinism guarantees as
+`stamp_structures` (seed-only, no net/save). Tune the `CITY_*` / `BUILD_*` /
+`STREET_W` / `ROOM_STEP` consts in `worldgen.rs`; it is not moddable from the
+structure library.
+
 ## Using a structure in the base game / a mod
 
 `src/structure.rs` is a plain module (no ECS) exposing:

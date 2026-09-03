@@ -71,9 +71,6 @@ fn on_server(mode: Res<NetMode>) -> bool {
 fn on_client(mode: Res<NetMode>) -> bool {
     *mode == NetMode::Client
 }
-fn is_networked(mode: Res<NetMode>) -> bool {
-    mode.networked()
-}
 
 // --- Wire protocol ------------------------------------------------------
 
@@ -167,7 +164,7 @@ impl ChatLog {
     pub fn capturing(&self) -> bool {
         self.input.is_some()
     }
-    fn push_line(&mut self, line: impl Into<String>) {
+    pub fn push_line(&mut self, line: impl Into<String>) {
         self.lines.push(line.into());
         let overflow = self.lines.len().saturating_sub(CHAT_KEEP);
         if overflow > 0 {
@@ -236,7 +233,11 @@ impl Plugin for NetPlugin {
                     .run_if(on_client)
                     .run_if(in_state(GameFlow::Playing)),
             )
-            .add_systems(Update, (chat_capture, chat_ui_sync).run_if(is_networked));
+            // The in-game chat (and its `/comandos`) works solo too, not only online.
+            .add_systems(
+                Update,
+                (chat_capture, chat_ui_sync).run_if(in_state(GameFlow::Playing)),
+            );
     }
 }
 
@@ -549,7 +550,10 @@ fn handle_client_msg(
             let welcome = ServerMsg::Welcome {
                 id,
                 seed: seed.0,
-                spawn: record.as_ref().map(|r| r.pos).unwrap_or_else(default_spawn),
+                spawn: record
+                    .as_ref()
+                    .map(|r| r.pos)
+                    .unwrap_or_else(|| crate::worldgen::land_spawn(seed.0)),
                 edits: world
                     .edits
                     .iter()
@@ -1334,8 +1338,9 @@ fn chat_capture(
     paused: Res<Paused>,
     flow: Res<State<GameFlow>>,
     slot_c: NonSend<ClientSlot>,
+    mut cmds: MessageWriter<crate::command::ChatCommand>,
 ) {
-    if !mode.networked() || paused.0 || !matches!(flow.get(), GameFlow::Playing) {
+    if paused.0 || !matches!(flow.get(), GameFlow::Playing) {
         chat.input = None;
         return;
     }
@@ -1351,8 +1356,13 @@ fn chat_capture(
                     .take()
                     .map(|t| sanitize(&t, CHAT_MAX_LEN))
                     .unwrap_or_default();
-                if !text.is_empty() {
+                if text.is_empty() {
+                } else if text.starts_with('/') {
+                    cmds.write(crate::command::ChatCommand(text));
+                } else if mode.networked() {
                     send_chat(*mode, slot_c.0.as_ref(), &mut chat, text);
+                } else {
+                    chat.push_line(format!("<yo> {text}"));
                 }
             }
             (Some(_), Key::Escape) => chat.input = None,

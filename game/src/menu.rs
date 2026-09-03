@@ -9,12 +9,17 @@
 //! the buttons that open them. Graphics settings live here (`graphics.json`).
 
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
+use bevy::core_pipeline::prepass::{DepthPrepass, NormalPrepass};
 use bevy::input::ButtonState;
 use bevy::input::keyboard::{Key, KeyboardInput};
+use bevy::light::DirectionalLightShadowMap;
+use bevy::pbr::ScreenSpaceAmbientOcclusion;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use crate::camera::MainCamera;
 use crate::chunk_material::CutoutSettings;
 use crate::keybinds::OpenControlsButton;
 use crate::net::{JoinServer, normalize_addr};
@@ -56,7 +61,8 @@ impl Plugin for MenuPlugin {
                     menu_button_visuals,
                     apply_graphics,
                 ),
-            );
+            )
+            .add_systems(Last, limit_fps);
     }
 }
 
@@ -193,6 +199,14 @@ pub struct GraphicsSettings {
     pub cutout: bool,
     pub cutout_radius: f32,
     pub brightness: f32,
+    /// Frame-rate cap. `0` = unlimited.
+    #[serde(default)]
+    pub fps_cap: u32,
+    /// "Ray tracing" toggle: screen-space ambient occlusion + high-res shadow
+    /// maps for softer, better-grounded shading. (Hardware RT isn't available in
+    /// this engine version; this is the closest quality bump without it.)
+    #[serde(default)]
+    pub advanced_shading: bool,
 }
 
 impl Default for GraphicsSettings {
@@ -201,9 +215,13 @@ impl Default for GraphicsSettings {
             cutout: true,
             cutout_radius: 3.4,
             brightness: 380.0,
+            fps_cap: 0,
+            advanced_shading: false,
         }
     }
 }
+
+const FPS_STEPS: [u32; 5] = [0, 30, 60, 120, 144];
 
 impl GraphicsSettings {
     fn path() -> PathBuf {
@@ -222,16 +240,64 @@ impl GraphicsSettings {
     }
 }
 
+#[allow(clippy::type_complexity)]
 fn apply_graphics(
     gfx: Res<GraphicsSettings>,
     mut cutout: ResMut<CutoutSettings>,
     ambient: Option<ResMut<GlobalAmbientLight>>,
+    shadow_map: Option<ResMut<DirectionalLightShadowMap>>,
+    mut commands: Commands,
+    cam_q: Query<(Entity, Has<ScreenSpaceAmbientOcclusion>, &Msaa), With<MainCamera>>,
 ) {
-    cutout.enabled = gfx.cutout;
+    // SSAO needs `Msaa::Off`, but the vision-cutout shader relies on MSAA
+    // alpha-to-coverage — so "advanced shading" turns the cutout off.
+    cutout.enabled = gfx.cutout && !gfx.advanced_shading;
     cutout.radius = gfx.cutout_radius;
     if let Some(mut ambient) = ambient {
         ambient.brightness = gfx.brightness;
     }
+
+    // "Advanced shading" = SSAO on the main camera + sharper shadow maps.
+    let want_shadow = if gfx.advanced_shading { 4096 } else { 2048 };
+    if let Some(mut sm) = shadow_map {
+        if sm.size != want_shadow {
+            sm.size = want_shadow;
+        }
+    }
+    if let Ok((cam, has_ssao, msaa)) = cam_q.single() {
+        let want_msaa = if gfx.advanced_shading {
+            Msaa::Off
+        } else {
+            Msaa::Sample4
+        };
+        if *msaa != want_msaa {
+            commands.entity(cam).insert(want_msaa);
+        }
+        if gfx.advanced_shading && !has_ssao {
+            commands
+                .entity(cam)
+                .insert(ScreenSpaceAmbientOcclusion::default());
+        } else if !gfx.advanced_shading && has_ssao {
+            commands
+                .entity(cam)
+                .remove::<ScreenSpaceAmbientOcclusion>()
+                .remove::<(DepthPrepass, NormalPrepass)>();
+        }
+    }
+}
+
+/// Sleeps at the end of each frame to hold the frame-rate at `fps_cap`.
+fn limit_fps(gfx: Res<GraphicsSettings>, mut last: Local<Option<Instant>>) {
+    if gfx.fps_cap > 0 {
+        if let Some(prev) = *last {
+            let target = Duration::from_secs_f64(1.0 / gfx.fps_cap as f64);
+            let elapsed = prev.elapsed();
+            if elapsed < target {
+                std::thread::sleep(target - elapsed);
+            }
+        }
+    }
+    *last = Some(Instant::now());
 }
 
 #[derive(Component, Clone, Copy)]
@@ -241,6 +307,8 @@ enum GraphicsButton {
     RadiusUp,
     BrightnessDown,
     BrightnessUp,
+    FpsCycle,
+    ToggleAdvanced,
 }
 
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
@@ -248,6 +316,8 @@ enum GraphicsLabel {
     Cutout,
     Radius,
     Brightness,
+    Fps,
+    Advanced,
 }
 
 // === Text entry (new world / new server) =============================
@@ -425,6 +495,12 @@ fn spawn_menu(mut commands: Commands) {
             gfx_row(root, GraphicsLabel::Brightness, "Ambient brightness", &[
                 ("−", GraphicsButton::BrightnessDown),
                 ("＋", GraphicsButton::BrightnessUp),
+            ]);
+            gfx_row(root, GraphicsLabel::Fps, "FPS limit", &[
+                ("cycle", GraphicsButton::FpsCycle),
+            ]);
+            gfx_row(root, GraphicsLabel::Advanced, "Ray tracing (SSAO + HD shadows)", &[
+                ("", GraphicsButton::ToggleAdvanced),
             ]);
             button(root, "Back", GoTo(MenuNav::Settings));
         });
@@ -914,6 +990,11 @@ fn graphics_buttons(
             GraphicsButton::BrightnessUp => {
                 gfx.brightness = (gfx.brightness + 40.0).min(700.0)
             }
+            GraphicsButton::FpsCycle => {
+                let i = FPS_STEPS.iter().position(|&v| v == gfx.fps_cap).unwrap_or(0);
+                gfx.fps_cap = FPS_STEPS[(i + 1) % FPS_STEPS.len()];
+            }
+            GraphicsButton::ToggleAdvanced => gfx.advanced_shading = !gfx.advanced_shading,
         }
         gfx.save();
     }
@@ -930,6 +1011,16 @@ fn sync_graphics_labels(
             }
             GraphicsLabel::Radius => format!("{:.1}", gfx.cutout_radius),
             GraphicsLabel::Brightness => format!("{:.0}", gfx.brightness),
+            GraphicsLabel::Fps => {
+                if gfx.fps_cap == 0 {
+                    "unlimited".into()
+                } else {
+                    format!("{} fps", gfx.fps_cap)
+                }
+            }
+            GraphicsLabel::Advanced => {
+                if gfx.advanced_shading { "ON".into() } else { "OFF".into() }
+            }
         };
     }
 }

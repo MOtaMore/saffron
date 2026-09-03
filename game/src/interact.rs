@@ -23,7 +23,9 @@ use crate::player::Player;
 use crate::streaming::ChunkWorld;
 
 const RAY_MAX: f32 = 4000.0;
-const INTERACT_REACH: f32 = 80.0;
+/// How far from the player a block can be mined / placed (same in the eagle view
+/// and first person — `pick` measures from the player, not the camera).
+const INTERACT_REACH: f32 = 5.0;
 const HOTBAR_GUARD_PX: f32 = 76.0;
 
 const ROOM_HEIGHT: i32 = 4;
@@ -94,9 +96,15 @@ pub struct CellHit {
 fn mine_time(block: Block) -> f32 {
     match block {
         Block::Leaves | Block::WheatCrop => 0.15,
-        Block::Grass | Block::Dirt | Block::Sand | Block::Snow | Block::Farmland => 0.4,
+        Block::Grass | Block::Dirt | Block::Sand | Block::Snow | Block::Farmland
+        | Block::Clay | Block::Mud => 0.4,
         Block::Wood => 0.9,
-        Block::Stone => 1.2,
+        Block::Stone
+        | Block::Cobblestone
+        | Block::PolishedStone
+        | Block::StoneBrick
+        | Block::Bricks
+        | Block::Cement => 1.2,
         _ => 0.5,
     }
 }
@@ -113,6 +121,7 @@ fn interact_click(
     fishing: Res<FishingState>,
     station_menu: Res<StationChoices>,
     cutout: Res<CutoutSettings>,
+    cam_mode: Res<crate::firstperson::CameraMode>,
     windows: Query<&Window>,
     camera_q: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
     player_q: Query<&Transform, With<Player>>,
@@ -139,7 +148,10 @@ fn interact_click(
     };
     let player_pos = player_q.iter().next().map(|t| t.translation);
     let ghost = ghost_region(&cutout, player_pos, cam_tf);
-    let Some(hit) = pick(window, camera, cam_tf, &world, player_pos, ghost) else {
+    let Some(aim) = crate::firstperson::aim_point(window, &cam_mode) else {
+        return;
+    };
+    let Some(hit) = pick(window, camera, cam_tf, &world, player_pos, ghost, aim) else {
         return;
     };
 
@@ -163,6 +175,15 @@ fn interact_click(
             inventory.take(Item::Block(block), 1);
         }
     }
+
+    // Cement (mortar): left-click a Brick block in hand to set it into Cement.
+    // Breaking that Cement gives only loose bricks back (see `grant_drop`).
+    if inventory.selected_item() == Some(Item::Cement)
+        && pointed == Some(Block::Bricks)
+        && world.set_block(hit.cell.x, hit.cell.y, hit.cell.z, Block::Cement)
+    {
+        inventory.take(Item::Cement, 1);
+    }
 }
 
 // --- Hold: mine the targeted block over time -------------------------------
@@ -177,6 +198,7 @@ struct Guards<'w> {
     fishing: Res<'w, FishingState>,
     station_menu: Res<'w, StationChoices>,
     cutout: Res<'w, CutoutSettings>,
+    cam_mode: Res<'w, crate::firstperson::CameraMode>,
 }
 
 fn ghost_region(
@@ -215,7 +237,8 @@ fn mining(
         && guards.container_open.0.is_none()
         && !guards.fishing.busy()
         && guards.station_menu.0.is_empty()
-        && !holding_block;
+        && !holding_block
+        && selected != Some(Item::Cement);
     if !can_mine {
         state.0 = None;
         return;
@@ -227,7 +250,11 @@ fn mining(
     };
     let player_pos = player_q.iter().next().map(|t| t.translation);
     let ghost = ghost_region(&guards.cutout, player_pos, cam_tf);
-    let Some(hit) = pick(window, camera, cam_tf, &world, player_pos, ghost) else {
+    let Some(aim) = crate::firstperson::aim_point(window, &guards.cam_mode) else {
+        state.0 = None;
+        return;
+    };
+    let Some(hit) = pick(window, camera, cam_tf, &world, player_pos, ghost, aim) else {
         state.0 = None;
         return;
     };
@@ -293,6 +320,16 @@ fn grant_drop(inventory: &mut Inventory, block: Block, rng: &mut u32) {
         } else {
             inventory.add(Item::Block(Block::Gravel), 1);
         }
+        return;
+    }
+    // Clay breaks into a handful of balls, fired into bricks in a furnace.
+    if block == Block::Clay {
+        inventory.add(Item::ClayBall, 4);
+        return;
+    }
+    // Cement crumbles back to loose bricks — the mortar is lost.
+    if block == Block::Cement {
+        inventory.add(Item::Brick, 2);
         return;
     }
     if let Some(drop) = block.drop_item() {
@@ -463,7 +500,7 @@ fn fell_tree(world: &mut ChunkWorld, inventory: &mut Inventory, start: IVec3) {
 struct MiningAssets {
     cube: Handle<Mesh>,
     /// Indexed by `block as usize` (enum order).
-    particle_mat: [Handle<StandardMaterial>; 20],
+    particle_mat: [Handle<StandardMaterial>; 27],
 }
 
 #[derive(Component)]
@@ -499,6 +536,13 @@ fn setup_mining_assets(
         Block::Farmland,
         Block::WheatCrop,
         Block::HandMill,
+        Block::Cobblestone,
+        Block::Clay,
+        Block::Mud,
+        Block::PolishedStone,
+        Block::StoneBrick,
+        Block::Bricks,
+        Block::Cement,
     ];
     let particle_mat = order.map(|b| {
         let c = b.color();
@@ -635,6 +679,7 @@ fn draw_highlight(
     inventory: Res<Inventory>,
     inv_open: Res<InventoryOpen>,
     cutout: Res<CutoutSettings>,
+    cam_mode: Res<crate::firstperson::CameraMode>,
     build: Res<BuildState>,
     state: Res<MiningState>,
     mut target_info: ResMut<TargetInfo>,
@@ -650,13 +695,17 @@ fn draw_highlight(
     }
     let player_pos = player_q.iter().next().map(|t| t.translation);
     let ghost = ghost_region(&cutout, player_pos, cam_tf);
-    let Some(hit) = pick(window, camera, cam_tf, &world, player_pos, ghost) else {
+    let Some(aim) = crate::firstperson::aim_point(window, &cam_mode) else {
+        return;
+    };
+    let Some(hit) = pick(window, camera, cam_tf, &world, player_pos, ghost, aim) else {
         return;
     };
 
     let selected = inventory.selected_item();
     let placing = matches!(selected, Some(Item::Block(_)));
-    if !build.room_mode && !placing {
+    let cementing = selected == Some(Item::Cement);
+    if !build.room_mode && !placing && !cementing {
         if let Some(block) = world.get_loaded(hit.cell.x, hit.cell.y, hit.cell.z) {
             target_info.block = Some(block);
             target_info.harvestable = block.is_breakable()
@@ -682,6 +731,8 @@ fn draw_highlight(
         (hit.cell + hit.normal, Color::srgb(1.0, 0.8, 0.2))
     } else if placing {
         (hit.cell + hit.normal, Color::srgb(0.4, 0.9, 1.0))
+    } else if cementing {
+        (hit.cell, Color::srgb(0.72, 0.72, 0.78))
     } else if target_info.harvestable {
         (hit.cell, Color::srgb(1.0, 0.35, 0.35))
     } else {
@@ -714,12 +765,14 @@ fn pick(
     world: &ChunkWorld,
     player_pos: Option<Vec3>,
     ghost: Option<Ghost>,
+    aim: Vec2,
 ) -> Option<CellHit> {
-    let cursor = window.cursor_position()?;
-    if cursor.y > window.height() - HOTBAR_GUARD_PX {
+    // Don't pick through the hotbar (in first person the crosshair sits at the
+    // screen centre, well clear of it).
+    if aim.y > window.height() - HOTBAR_GUARD_PX {
         return None;
     }
-    let ray = camera.viewport_to_world(cam_tf, cursor).ok()?;
+    let ray = camera.viewport_to_world(cam_tf, aim).ok()?;
     let hit = raycast_cell(world, ray.origin, *ray.direction, RAY_MAX, ghost)?;
     if let Some(p) = player_pos {
         if (hit.cell.as_vec3() + Vec3::splat(0.5)).distance(p) > INTERACT_REACH {

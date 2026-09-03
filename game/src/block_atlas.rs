@@ -1,10 +1,12 @@
 //! Assembles the block texture atlas at runtime from the PNGs in
 //! `assets/textures/blocks/` and binds it to the chunk material once ready.
 //!
-//! Atlas = one row of 15 tiles of 16×16 (see `block::ATLAS_COLS`):
+//! Atlas = one row of 22 tiles of 16×16 (see `block::ATLAS_COLS`):
 //! `0..3` grass side/top/bottom · `3..5` wood side/end · `5` leaves · `6` sand
 //! `7` stone · `8` gravel · `9` wood planks · `10` plowed land · `11` snow
-//! `12` glass · `13` bedrock (roca madre) · `14` blank white.
+//! `12` glass · `13` bedrock (roca madre) · `14` blank white · `15` cobblestone
+//! `16` clay · `17` mud · `18` polished stone · `19` stone brick · `20` bricks
+//! `21` cement.
 
 use bevy::asset::RenderAssetUsages;
 use bevy::image::{Image, ImageSampler};
@@ -14,7 +16,7 @@ use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use crate::chunk_material::{ChunkMaterial, ChunkMaterialHandle, GlassMaterialHandle};
 
 const TILE: usize = 16;
-const COLS: usize = 15;
+const COLS: usize = 22;
 
 pub struct BlockAtlasPlugin;
 
@@ -46,6 +48,13 @@ fn load_sources(mut commands: Commands, server: Res<AssetServer>) {
             (server.load("textures/blocks/snow.png"), 1, 11),
             (server.load("textures/blocks/glass.png"), 1, 12),
             (server.load("textures/blocks/mother_rock.png"), 1, 13),
+            (server.load("textures/blocks/cobblestone.png"), 1, 15),
+            (server.load("textures/blocks/clay.png"), 1, 16),
+            (server.load("textures/blocks/mud.png"), 1, 17),
+            (server.load("textures/blocks/polished_stone.png"), 1, 18),
+            (server.load("textures/blocks/stone_brick.png"), 1, 19),
+            (server.load("textures/blocks/bricks.png"), 1, 20),
+            (server.load("textures/blocks/cement.png"), 1, 21),
         ],
         done: false,
     });

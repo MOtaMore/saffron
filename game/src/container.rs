@@ -129,6 +129,9 @@ fn smelt_output(item: Item) -> Option<Item> {
         Item::Dough => Some(Item::Bread),
         Item::Block(Block::Sand) => Some(Item::Block(Block::Glass)),
         Item::Block(Block::Gravel) => Some(Item::Block(Block::Stone)),
+        // Fire cobblestone back into smooth rock; bake clay balls into bricks.
+        Item::Block(Block::Cobblestone) => Some(Item::Block(Block::Stone)),
+        Item::ClayBall => Some(Item::Brick),
         Item::Block(Block::Wood) => Some(Item::Charcoal),
         _ => None,
     }
@@ -252,6 +255,7 @@ fn try_open(
     station_menu: Res<StationChoices>,
     mut open: ResMut<OpenContainer>,
     mut inventory: ResMut<Inventory>,
+    cam_mode: Res<crate::firstperson::CameraMode>,
     windows: Query<&Window>,
     camera_q: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
     player_q: Query<&Transform, With<Player>>,
@@ -273,7 +277,7 @@ fn try_open(
     let (Ok(window), Ok((camera, cam_tf))) = (windows.single(), camera_q.single()) else {
         return;
     };
-    let Some(cursor) = window.cursor_position() else {
+    let Some(cursor) = crate::firstperson::aim_point(window, &cam_mode) else {
         return;
     };
     if cursor.y > window.height() - HOTBAR_GUARD_PX {

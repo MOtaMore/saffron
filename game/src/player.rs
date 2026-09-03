@@ -50,7 +50,6 @@ const GRAVITY: f32 = 26.0;
 const TERMINAL: f32 = 55.0;
 const WALK_SPEED: f32 = 6.5;
 const RUN_SPEED: f32 = 10.5;
-const FLY_SPEED: f32 = 22.0;
 const JUMP_SPEED: f32 = 9.0;
 
 const STEP_HEIGHT: f32 = 1.05;
@@ -104,14 +103,21 @@ impl Plugin for PlayerPlugin {
                     attach_held_to_arm,
                     attach_player_anim,
                     drive_player_anim,
-                    update_player_shadow,
                 ),
+            )
+            // The blob shadow follows the model, which is hidden in first person.
+            .add_systems(
+                Update,
+                update_player_shadow.run_if(crate::firstperson::eagle_view),
             )
             .add_systems(
                 Update,
                 (issue_move_order, player_movement, update_move_marker)
                     .chain()
-                    .run_if(player_free),
+                    .run_if(player_free)
+                    // The eagle-view point-&-click scheme; first-person has its
+                    // own movement in `firstperson.rs`.
+                    .run_if(crate::firstperson::eagle_view),
             );
     }
 }
@@ -134,7 +140,7 @@ pub struct MoveOrder {
 }
 
 #[derive(Component)]
-struct MoveMarker;
+pub struct MoveMarker;
 
 /// Transform anchor in the player's hand; parents the held visuals.
 #[derive(Component)]
@@ -147,10 +153,10 @@ struct HeldCube;
 struct HeldModel(Item);
 /// The `Player.glb` scene root (child of the `Player` entity).
 #[derive(Component)]
-struct PlayerModel;
+pub struct PlayerModel;
 /// Soft blob shadow that tracks the player on the ground.
 #[derive(Component)]
-struct PlayerShadow;
+pub struct PlayerShadow;
 /// The scene entity Bevy attached an `AnimationPlayer` to.
 #[derive(Component)]
 struct PlayerAnimTarget;
@@ -207,8 +213,10 @@ fn spawn_player(
         if !ready {
             return;
         }
-        let h = world_gen.0.surface_height(0, 0);
-        Vec3::new(0.5, h as f32 + 3.0, 0.5)
+        // Never drop the player into the sea — find the nearest dry land.
+        let (sx, sz) = world_gen.0.find_land(0, 0);
+        let h = world_gen.0.surface_height(sx, sz);
+        Vec3::new(sx as f32 + 0.5, h as f32 + 3.0, sz as f32 + 0.5)
     };
 
     commands
@@ -339,6 +347,92 @@ fn issue_move_order(
     }
 }
 
+/// One frame of desired player motion, from whatever control scheme is active
+/// (point-&-click steering, or first-person WASD).
+pub struct MoveInput {
+    /// Horizontal move direction, normalised (or zero).
+    pub wish: Vec3,
+    pub run: bool,
+    /// A jump was pressed this frame (caller already checked `grounded`).
+    pub jump: bool,
+    /// Rotate the body to face `wish` (yes for the eagle view, no in first
+    /// person — there the camera does the aiming).
+    pub face_wish: bool,
+}
+
+/// Gravity, swept collision, 1-block step-up and jump. Shared by the eagle-view
+/// and first-person movement systems.
+pub fn step_player(
+    world: &ChunkWorld,
+    transform: &mut Transform,
+    body: &mut PlayerBody,
+    input: MoveInput,
+    dt: f32,
+) {
+    let mut pos = transform.translation;
+    let speed = if input.run { RUN_SPEED } else { WALK_SPEED };
+
+    if body.fly {
+        body.velocity = input.wish * (speed * 1.8);
+    } else {
+        body.velocity.x = input.wish.x * speed;
+        body.velocity.z = input.wish.z * speed;
+        if input.jump {
+            body.velocity.y = JUMP_SPEED;
+            body.grounded = false;
+        }
+        body.velocity.y = (body.velocity.y - GRAVITY * dt).clamp(-TERMINAL, TERMINAL);
+    }
+
+    let delta = body.velocity * dt;
+
+    // Horizontal move with automatic step-up.
+    let horizontal = Vec3::new(delta.x, 0.0, delta.z);
+    let want = pos + horizontal;
+    if !collides(world, want) {
+        pos = want;
+    } else if !body.fly && body.grounded && !collides(world, want + Vec3::Y * STEP_HEIGHT) {
+        pos = want + Vec3::Y * STEP_HEIGHT; // climb a one-block ledge
+    } else {
+        let mut p = pos;
+        p.x += delta.x;
+        if collides(world, p) {
+            p.x -= delta.x;
+            body.velocity.x = 0.0;
+        }
+        p.z += delta.z;
+        if collides(world, p) {
+            p.z -= delta.z;
+            body.velocity.z = 0.0;
+        }
+        pos = p;
+    }
+
+    // Vertical move.
+    body.grounded = false;
+    pos.y += delta.y;
+    if collides(world, pos) {
+        pos.y -= delta.y;
+        if delta.y < 0.0 {
+            body.grounded = true;
+        }
+        body.velocity.y = 0.0;
+    }
+    if pos.y < 1.0 {
+        pos.y = 1.0;
+        body.velocity.y = body.velocity.y.max(0.0);
+        body.grounded = true;
+    }
+
+    if input.face_wish && input.wish.length_squared() > 1e-4 {
+        let target_rot = Quat::from_rotation_y(input.wish.x.atan2(input.wish.z));
+        let t = 1.0 - (-12.0 * dt).exp();
+        transform.rotation = transform.rotation.slerp(target_rot, t);
+    }
+
+    transform.translation = pos;
+}
+
 fn player_movement(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
@@ -355,9 +449,9 @@ fn player_movement(
         return;
     }
 
-    let mut pos = transform.translation;
+    let pos = transform.translation;
 
-    // --- Steering toward the move target -------------------------------------
+    // Steering toward the click target.
     let mut wish = Vec3::ZERO;
     if let Some(target) = order.target {
         let to = Vec3::new(target.x - pos.x, 0.0, target.z - pos.z);
@@ -369,79 +463,18 @@ fn player_movement(
         }
     }
 
-    let speed = if binds.pressed(&keys, Action::Run) {
-        RUN_SPEED
-    } else {
-        WALK_SPEED
-    };
+    let run = binds.pressed(&keys, Action::Run);
+    let jump = body.grounded && binds.just_pressed(&keys, Action::Jump);
+    step_player(
+        &world,
+        &mut transform,
+        &mut body,
+        MoveInput { wish, run, jump, face_wish: true },
+        dt,
+    );
 
-    // --- Velocity ----------------------------------------------------------
-    if body.fly {
-        body.velocity = wish * (speed * 1.8);
-        if binds.pressed(&keys, Action::Jump) {
-            body.velocity.y += FLY_SPEED;
-        }
-        if keys.pressed(KeyCode::ControlLeft) {
-            body.velocity.y -= FLY_SPEED;
-        }
-    } else {
-        body.velocity.x = wish.x * speed;
-        body.velocity.z = wish.z * speed;
-        if body.grounded && binds.just_pressed(&keys, Action::Jump) {
-            body.velocity.y = JUMP_SPEED;
-            body.grounded = false;
-        }
-        body.velocity.y = (body.velocity.y - GRAVITY * dt).clamp(-TERMINAL, TERMINAL);
-    }
-
-    let delta = body.velocity * dt;
-
-    // --- Horizontal move with automatic step-up ---------------------------
-    let horizontal = Vec3::new(delta.x, 0.0, delta.z);
-    let want = pos + horizontal;
-    if !collides(&world, want) {
-        pos = want;
-    } else if !body.fly && body.grounded && !collides(&world, want + Vec3::Y * STEP_HEIGHT) {
-        pos = want + Vec3::Y * STEP_HEIGHT; // climb a one-block ledge
-    } else {
-        // Blocked: resolve each axis, reverting the one that hit a wall.
-        let mut p = pos;
-        p.x += delta.x;
-        if collides(&world, p) {
-            p.x -= delta.x;
-            body.velocity.x = 0.0;
-        }
-        p.z += delta.z;
-        if collides(&world, p) {
-            p.z -= delta.z;
-            body.velocity.z = 0.0;
-        }
-        pos = p;
-    }
-
-    // --- Vertical move ---------------------------------------------------
-    body.grounded = false;
-    pos.y += delta.y;
-    if collides(&world, pos) {
-        pos.y -= delta.y;
-        if delta.y < 0.0 {
-            body.grounded = true;
-        }
-        body.velocity.y = 0.0;
-    }
-
-    if pos.y < 1.0 {
-        pos.y = 1.0;
-        body.velocity.y = body.velocity.y.max(0.0);
-        body.grounded = true;
-    }
-
-    // --- Face travel direction & give up if wedged ----------------------
+    // Give up on a target we can't make progress toward.
     if wish.length_squared() > 1e-4 {
-        let target_rot = Quat::from_rotation_y(wish.x.atan2(wish.z));
-        let t = 1.0 - (-12.0 * dt).exp();
-        transform.rotation = transform.rotation.slerp(target_rot, t);
-
         let horizontal_speed = Vec3::new(body.velocity.x, 0.0, body.velocity.z).length();
         if body.grounded && horizontal_speed < 0.4 {
             order.stuck_timer += dt;
@@ -453,8 +486,6 @@ fn player_movement(
             order.stuck_timer = 0.0;
         }
     }
-
-    transform.translation = pos;
 }
 
 fn update_move_marker(

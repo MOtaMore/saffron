@@ -58,6 +58,10 @@ pub enum Item {
     Flour,   // trigo molido en el molino manual
     Dough,   // harina + botella de agua
     Bread,   // masa cocinada en el horno
+    // Masonry.
+    ClayBall, // bodoque de arcilla — de picar bloques de arcilla; se cuece en ladrillo
+    Brick,    // ladrillo — bodoque de arcilla cocido; 4 → bloque de Ladrillo
+    Cement,   // cemento (mortero) — clic izq. sobre un bloque de Ladrillo lo vuelve Cemento
 }
 
 impl Item {
@@ -141,6 +145,9 @@ impl Item {
             Item::Flour => "Flour".into(),
             Item::Dough => "Dough".into(),
             Item::Bread => "Bread".into(),
+            Item::ClayBall => "Clay Ball".into(),
+            Item::Brick => "Brick".into(),
+            Item::Cement => "Cement".into(),
         }
     }
 
@@ -210,6 +217,9 @@ impl Item {
             Item::Flour => Color::srgb(0.95, 0.93, 0.87),
             Item::Dough => Color::srgb(0.88, 0.82, 0.65),
             Item::Bread => Color::srgb(0.76, 0.55, 0.28),
+            Item::ClayBall => Color::srgb(0.58, 0.60, 0.66),
+            Item::Brick => Color::srgb(0.70, 0.34, 0.26),
+            Item::Cement => Color::srgb(0.66, 0.66, 0.64),
         }
     }
 
@@ -296,6 +306,13 @@ fn block_side_sprite(b: Block) -> Option<(&'static str, Option<Rect>)> {
         Block::Snow => ("textures/blocks/snow.png", None),
         Block::Glass => ("textures/blocks/glass.png", None),
         Block::Bedrock => ("textures/blocks/mother_rock.png", None),
+        Block::Cobblestone => ("textures/blocks/cobblestone.png", None),
+        Block::Clay => ("textures/blocks/clay.png", None),
+        Block::Mud => ("textures/blocks/mud.png", None),
+        Block::PolishedStone => ("textures/blocks/polished_stone.png", None),
+        Block::StoneBrick => ("textures/blocks/stone_brick.png", None),
+        Block::Bricks => ("textures/blocks/bricks.png", None),
+        Block::Cement => ("textures/blocks/cement.png", None),
         _ => return None,
     })
 }
@@ -330,10 +347,20 @@ pub fn paint_icon(
 pub fn ideal_tool(block: Block) -> Option<ToolKind> {
     match block {
         Block::Wood => Some(ToolKind::Axe),
-        Block::Stone => Some(ToolKind::Pick),
-        Block::Dirt | Block::Grass | Block::Sand | Block::Snow | Block::Gravel | Block::Farmland => {
-            Some(ToolKind::Shovel)
-        }
+        Block::Stone
+        | Block::Cobblestone
+        | Block::PolishedStone
+        | Block::StoneBrick
+        | Block::Bricks
+        | Block::Cement => Some(ToolKind::Pick),
+        Block::Dirt
+        | Block::Grass
+        | Block::Sand
+        | Block::Snow
+        | Block::Gravel
+        | Block::Farmland
+        | Block::Clay
+        | Block::Mud => Some(ToolKind::Shovel),
         _ => None,
     }
 }
@@ -342,7 +369,12 @@ pub fn ideal_tool(block: Block) -> Option<ToolKind> {
 pub fn can_harvest(block: Block, tool: Option<ToolKind>) -> bool {
     match block {
         Block::Wood => tool == Some(ToolKind::Axe),
-        Block::Stone => tool == Some(ToolKind::Pick),
+        Block::Stone
+        | Block::Cobblestone
+        | Block::PolishedStone
+        | Block::StoneBrick
+        | Block::Bricks
+        | Block::Cement => tool == Some(ToolKind::Pick),
         Block::Dirt | Block::Grass | Block::Farmland => {
             matches!(tool, Some(ToolKind::Shovel) | Some(ToolKind::Pick))
         }
@@ -353,7 +385,12 @@ pub fn can_harvest(block: Block, tool: Option<ToolKind>) -> bool {
 pub fn tool_hint(block: Block) -> &'static str {
     match block {
         Block::Wood => "needs an axe",
-        Block::Stone => "needs a pickaxe",
+        Block::Stone
+        | Block::Cobblestone
+        | Block::PolishedStone
+        | Block::StoneBrick
+        | Block::Bricks
+        | Block::Cement => "needs a pickaxe",
         Block::Dirt | Block::Grass | Block::Farmland => "needs a shovel or pickaxe",
         _ => "",
     }
@@ -503,7 +540,7 @@ pub const RECIPES: &[Recipe] = &[
         out: (Item::Block(Block::Furnace), 1),
         kind: RecipeKind::Shaped {
             rows: &["###", "# #", "###"],
-            key: &[('#', Item::Block(Block::Stone))],
+            key: &[('#', Item::Block(Block::Cobblestone))],
         },
         station: Station::Workbench,
     },
@@ -520,7 +557,7 @@ pub const RECIPES: &[Recipe] = &[
         out: (Item::Block(Block::HandMill), 1),
         kind: RecipeKind::Shaped {
             rows: &["###", "#s#", "###"],
-            key: &[('#', Item::Block(Block::Stone)), ('s', Item::Stick)],
+            key: &[('#', Item::Block(Block::Cobblestone)), ('s', Item::Stick)],
         },
         station: Station::Workbench,
     },
@@ -531,6 +568,57 @@ pub const RECIPES: &[Recipe] = &[
             items: &[Item::Flour, Item::WaterBottle],
         },
         station: Station::Hand,
+    },
+    // --- Masonry ---
+    Recipe {
+        // 4 clay balls pack back into a clay block.
+        out: (Item::Block(Block::Clay), 1),
+        kind: RecipeKind::Shaped {
+            rows: &["##", "##"],
+            key: &[('#', Item::ClayBall)],
+        },
+        station: Station::Hand,
+    },
+    Recipe {
+        // 4 fired bricks → 4 brick blocks.
+        out: (Item::Block(Block::Bricks), 4),
+        kind: RecipeKind::Shaped {
+            rows: &["##", "##"],
+            key: &[('#', Item::Brick)],
+        },
+        station: Station::Hand,
+    },
+    Recipe {
+        // 2×2 rock → 4 polished stone.
+        out: (Item::Block(Block::PolishedStone), 4),
+        kind: RecipeKind::Shaped {
+            rows: &["##", "##"],
+            key: &[('#', Item::Block(Block::Stone))],
+        },
+        station: Station::Workbench,
+    },
+    Recipe {
+        // 2×2 polished stone → 4 stone bricks.
+        out: (Item::Block(Block::StoneBrick), 4),
+        kind: RecipeKind::Shaped {
+            rows: &["##", "##"],
+            key: &[('#', Item::Block(Block::PolishedStone))],
+        },
+        station: Station::Workbench,
+    },
+    Recipe {
+        // 2 clay + 2 gravel, mixed → 4 cement (mortar). Left-click a Brick block
+        // with it in hand to set it into a Cement block.
+        out: (Item::Cement, 4),
+        kind: RecipeKind::Shapeless {
+            items: &[
+                Item::Block(Block::Clay),
+                Item::Block(Block::Clay),
+                Item::Block(Block::Gravel),
+                Item::Block(Block::Gravel),
+            ],
+        },
+        station: Station::Workbench,
     },
 ];
 

@@ -24,7 +24,13 @@ botones:
   abajo. `✕` con doble clic borra la entrada.
 - **Structure Editor** → editor de estructuras aparte (`editor.rs`). Ver abajo.
 - **Configuración** → *Skin* (`skins.rs`), *Controles* (`keybinds.rs`),
-  *Gráficos* (recorte de visión on/off, radio, brillo ambiental → `graphics.json`).
+  *Gráficos* → `graphics.json`: recorte de visión (on/off, radio), brillo
+  ambiental, **límite de FPS** (`0` = ilimitado · 30 · 60 · 120 · 144; `limit_fps`
+  duerme al final del frame) y **Ray tracing** (`advanced_shading`): añade **SSAO**
+  a la cámara + **sombras de 4096** — *no es RT por hardware* (esta versión del
+  motor no lo trae), es el salto de calidad más cercano sin él. SSAO exige
+  `Msaa::Off`, y el **recorte de visión** usa alpha-to-coverage MSAA, así que
+  activar Ray tracing **desactiva el recorte** mientras esté puesto.
 - **Salir** → cierra el juego.
 
 `Esc` en un subpantalla vuelve atrás. Al jugar:
@@ -37,6 +43,32 @@ El guardado (`save.rs`) persiste: semilla del mundo, el **overlay de ediciones**
 (`ChunkWorld::edits`, todo lo que has puesto/roto — que además ahora **sobrevive
 a la descarga de chunks**), inventario + slot activo, contenido de cofres y
 hornos, y posición del jugador. Cada mundo en su propio archivo bajo `saves/`.
+
+## Chat y comandos (`command.rs`)
+
+El chat funciona **también en un jugador**, no solo en red. `Intro` abre la línea
+de escritura, `Intro` envía, `Esc` cancela (mientras escribes, el jugador no se
+mueve). En red, el texto normal viaja a los demás; en un jugador solo se muestra
+en tu pantalla.
+
+Las líneas que empiezan por `/` son **comandos** (nunca se envían por la red) y
+los procesa `command::run_commands`. Van en inglés, como el texto in-game:
+
+| Comando | Qué hace |
+|---|---|
+| `/help` | lista los comandos |
+| `/pos` | muestra tus coordenadas |
+| `/biome <name>` | te teletransporta al bioma más cercano — `plains`, `forest`, `desert`, `snow` |
+| `/structure` | a la estructura de librería generable más cercana (necesita `.json` en `assets/structures/`) |
+| `/city` | a la ciudad en ruinas más cercana |
+| `/spawn` | de vuelta al punto de aparición del mundo |
+
+Las búsquedas (`worldgen::nearest_biome` / `nearest_structure` /
+`nearest_ruined_city`) recorren en anillos crecientes desde tu posición y son
+deterministas. El teletransporte **siempre aterriza sobre la superficie**
+(`command::safe_landing` escanea la columna real del destino —generándola si el
+chunk aún no está cargado— para dejarte encima del bloque sólido más alto, nunca
+dentro de un edificio o del terreno), con la velocidad a cero.
 
 ## Multijugador (`net.rs`) — v1
 
@@ -61,7 +93,8 @@ animales, items tirados, pesca.
   a conectarte con el mismo nombre te devuelve tu inventario, stats y posición.
   *Limitación:* dos jugadores con el mismo nombre de usuario comparten ranura.
   En modo cliente **no** se escribe `saves/*.json` local: manda el servidor.
-- **Chat**: `Intro` abre la línea de escritura, `Intro` envía, `Esc` cancela.
+- **Chat**: ver la sección *Chat y comandos* más arriba (funciona en red y en un
+  jugador; `/` = comando local).
 
 ## Skins (`skins.rs`)
 
@@ -152,6 +185,30 @@ con IPC; si Discord no está abierto no pasa nada (reintenta cada 15 s).
     por voxel.)*
   - **Grietas / ravinas**: cortes verticales estrechos y profundos que rompen
     la superficie, en regiones dispersas (`ravine_mask`).
+  - **Arcilla / Barro**: parches de Arcilla en la arena de bajíos y playas de
+    lagos/ríos; Barro en las riberas de hierba pegadas a un río sin arena.
+  - **Ciudades en ruinas** (`stamp_ruins`): en regiones de `16 × 16` chunks
+    (`CITY_PER_MIL ≈ 9 %`), sobre tierra firme. La ciudad es una rejilla de
+    **manzanas** (`2×2..3×3`) separadas por **calles** (`STREET_W = 9`); cada
+    manzana tiene **3–7 bloques de pisos** grandes (`15..22` de lado, `4..12`
+    plantas) casi pegados (`BUILD_GAP = 2`). El suelo de la ciudad es **Césped**
+    dentro de las manzanas y **caminos de Grava** por las calles entre ellas.
+    **Gradiente de material** por
+    altura (`ruin_material`): base de **Ladrillos de Roca**, cuerpo de
+    **Cemento**, remate de **Ladrillo**; cimientos de Piedra. Interiores
+    **estrechos** estilo khrushchyovka: rejilla de tabiques con cuartos de
+    `ROOM_STEP = 3` y un pasillo de 1 por el eje mayor. **Techos a medio
+    derruir** (agujeros que crecen con el daño y la altura) y una **caja de
+    escalera** en una esquina — dos peldaños + hueco en cada losa — para subir
+    de planta. Cada edificio deja **0–2 cofres** en la planta baja, **vacíos**
+    por ahora (se abren como cualquier cofre; el botín llegará más adelante).
+    Medio derrumbados (ruido `ruin`) — inspiración soviética
+    temprana / *Samosbor*. Cada edificio se nivela a su propia base y todo se
+    ancla dentro de la región → determinista desde la semilla, sin red ni
+    guardado, igual que las estructuras.
+- **Aparición del jugador**: al empezar un mundo nuevo el jugador nunca cae al
+  agua — `WorldGen::find_land` busca en espiral la columna de tierra firme más
+  cercana al origen (por encima del mar, fuera de ríos).
 - **Cutout de cámara**: el material de los chunks es un `ExtendedMaterial` con
   un shader que vuelve translúcidos (alpha-to-coverage) los fragmentos que están
   entre la cámara y el jugador dentro de un radio en pantalla. El jugador nunca
@@ -204,7 +261,8 @@ con IPC; si Discord no está abierto no pasa nada (reintenta cada 15 s).
   items van en un cubo con su textura.
 - **Recolección**: con la mano vacía / herramienta, **mantén** clic izquierdo
   para minar; tarda según el material y la herramienta, con barrita en el cursor,
-  outline que se encoge y escombros. **Talar** derriba solo el **tronco vertical**
+  outline que se encoge y escombros. **Alcance de minado / colocado: 5 bloques**
+  desde el jugador (`INTERACT_REACH`), igual en primera y tercera persona. **Talar** derriba solo el **tronco vertical**
   clicado + su copa cercana (detecta que es un árbol real por la forma: tronco
   corto rematado en hojas). La madera colocada por el jugador se rompe bloque a
   bloque y los árboles vecinos conservan su tronco. Las hojas no dan nada.
@@ -212,7 +270,10 @@ con IPC; si Discord no está abierto no pasa nada (reintenta cada 15 s).
 - **Herramientas obligatorias**: no se puede talar madera sin **hacha**, ni picar
   **piedra** sin **pico**, ni **tierra/hierba** sin **pala o pico**. La grava,
   arena, nieve y hojas se rompen a mano. Romper **grava** da **pedernal** (~35 %)
-  o grava.
+  o grava. Picar **Roca** (`Stone`) da **Piedra** (`Cobblestone`); fundir Piedra
+  la devuelve a Roca. Romper **Arcilla** da **Bodoques de arcilla** ×4.
+  **Cemento** es un objeto (mortero): clic izq. sobre un bloque de **Ladrillo**
+  lo fragua en Cemento; romper ese Cemento sólo devuelve Ladrillos (objeto).
 - **Crafteo por formas** (`I`, tipo Minecraft): coloca los objetos en la
   cuadrícula **2×2** (clic izq coge/deja pila, clic der deja 1 / coge la mitad)
   formando la **forma** de la receta (la posición relativa importa, y su reflejo
@@ -226,8 +287,10 @@ con IPC; si Discord no está abierto no pasa nada (reintenta cada 15 s).
   Si solo hay una, se abre directa; si hay varias, aparece un **selector** para
   elegir. `W` de nuevo (o `Esc`) cierra. Ya no es por proximidad.
   - **Banco de trabajo** → panel `I` con cuadrícula **3×3**: Pico, Pala y Caña
-    (Pedernal + Palo / Soga / Fibra) · **Cofre = 8 Madera** · **Horno = 8 Piedra**.
-    (El Hacha es la única herramienta del 2×2.) Detalle completo en `RECIPES.md`.
+    (Pedernal + Palo / Soga / Fibra) · **Cofre = 8 Madera** · **Horno = 8 Piedra**
+    (`Cobblestone`). (El Hacha es la única herramienta del 2×2.) Cadena de
+    mampostería (Roca Pulida, Ladrillos de Roca, Cemento, bloque de Ladrillo) y
+    detalle completo en `RECIPES.md`.
   - **Cofre / Horno** → su panel (también se pueden abrir con clic izquierdo).
 - **Cofres**: clic izquierdo (con la mano vacía / no un bloque) para abrir. 27
   ranuras; dos cofres pegados forman un **cofre doble** (54). Shift + mantener
@@ -317,6 +380,22 @@ con IPC; si Discord no está abierto no pasa nada (reintenta cada 15 s).
 - Resaltado del bloque objetivo con gizmo (rojo romper, azul colocar, naranja
   estancia).
 
+## Primera persona (`firstperson.rs`)
+
+`V` alterna entre la **vista de águila** (por defecto: cámara ortográfica cenital
++ movimiento por clic) y una **primera persona tipo FPS**. En primera persona:
+
+- La cámara pasa a **perspectiva** a la altura de los ojos del jugador; el ratón
+  mira alrededor (cursor capturado, se libera solo al abrir un menú o el chat).
+- **`WASD`** mueve relativo a hacia dónde miras, **`Espacio`** salta, **`Shift`**
+  corre (misma física que la vista de águila — `player::step_player`).
+- Minar / colocar / abrir cofres apunta al **centro de la pantalla** (mira), con
+  una cruz. Las estaciones se usan con **`F`** (porque `W` es avanzar).
+- Se ocultan el modelo del jugador, su sombra y el marcador de movimiento; el
+  *cutout* de cámara y el punto-y-clic quedan en pausa (`eagle_view`).
+
+Todo se revierte al pulsar `V` de nuevo (se restaura el zoom ortográfico).
+
 ## Controles
 
 Las teclas de juego son **remapeables** en Configuración → Controles
@@ -333,7 +412,8 @@ Las teclas de juego son **remapeables** en Configuración → Controles
 | Rueda | Ciclar el slot del hotbar |
 | Ctrl + rueda | Zoom de cámara |
 | `I` | Abrir/cerrar inventario 5×10 y panel de crafteo (2×2) |
-| `W` | Usar estación cercana (banco / cofre / horno); selector si hay varias |
+| `W` | Usar estación cercana (banco / cofre / horno); selector si hay varias — en **primera persona** es `F` (W = avanzar) |
+| `V` | Alternar **primera persona** (ratón para mirar, `WASD` para moverte) |
 | `B` | Modo estancia (2 clics: esquinas → suelo + muros) |
 | Barra espaciadora | Saltar |
 | `G` | Comer / beber junto al agua / llenar botella vacía junto al agua |
@@ -342,6 +422,7 @@ Las teclas de juego son **remapeables** en Configuración → Controles
 | Clic izq. con **Semillas** sobre tierra arada | Plantar trigo |
 | Clic izq. sobre **Molino manual** | Abrir su panel (mantener **MOLER** para moler) |
 | Shift | Correr (o paso grande al cambiar capa) |
+| `Intro` | Abrir la línea de chat / enviar (`/` = comando; ver *Chat y comandos*) |
 | `Esc` | Cierra el menú abierto (inventario / cofre / pesca); si no hay ninguno, abre el menú de pausa |
 | `K` | Cutout de cámara (bloques que tapan al jugador → translúcidos) on/off |
 | `L` | Capa de visión automática (sigue al jugador) on/off |
@@ -398,6 +479,8 @@ cargo run -- --connect 127.0.0.1:25599
 | `station.rs` | Tecla `W`: escaneo + selector de estación (banco / cofre / horno) |
 | `pause.rs` | Menú de pausa (`Esc`) y condición `not_paused` |
 | `net.rs` | Multijugador TCP casero: modos Host/Client/Server, sync de ediciones + jugadores + chat |
+| `command.rs` | Comandos de chat (`/biome`, `/structure`, `/city`, `/spawn`, …) |
+| `firstperson.rs` | Vista en primera persona alternable (`V`): cámara perspectiva, mouse-look, WASD |
 | `menu.rs` | Front-end: Jugar (mundos) / Multijugador (servidores) / Configuración / Salir |
 | `keybinds.rs` | Controles remapeables (`Action` → `KeyCode`) + pantalla de rebind |
 | `skins.rs` | Catálogo de skins + pantalla para verlas y elegirlas |

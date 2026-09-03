@@ -26,10 +26,24 @@ pub enum Block {
     Farmland,
     WheatCrop,
     HandMill,
+    /// Mined from `Stone`; smelts back into `Stone`.
+    Cobblestone,
+    /// Found in lake / river shallows; mining it drops `Item::ClayBall` ×4.
+    Clay,
+    /// Muddy river banks with no sand.
+    Mud,
+    /// 2×2 of `Stone` on a workbench → 4.
+    PolishedStone,
+    /// 2×2 of `PolishedStone` on a workbench → 4.
+    StoneBrick,
+    /// 2×2 of `Item::Brick` (smelted clay balls) → 4.
+    Bricks,
+    /// 2 `Clay` + 2 `Gravel` on a workbench → 4.
+    Cement,
 }
 
 /// Tile columns in the block texture atlas (see `block_atlas.rs`).
-pub const ATLAS_COLS: u32 = 15;
+pub const ATLAS_COLS: u32 = 22;
 const TILE_GRASS_SIDE: u32 = 0;
 const TILE_GRASS_TOP: u32 = 1;
 const TILE_GRASS_BOTTOM: u32 = 2;
@@ -46,6 +60,13 @@ const TILE_GLASS: u32 = 12;
 const TILE_BEDROCK: u32 = 13;
 /// Solid white — untextured blocks fall back to their vertex colour.
 pub const TILE_BLANK: u32 = 14;
+const TILE_COBBLESTONE: u32 = 15;
+const TILE_CLAY: u32 = 16;
+const TILE_MUD: u32 = 17;
+const TILE_POLISHED_STONE: u32 = 18;
+const TILE_STONE_BRICK: u32 = 19;
+const TILE_BRICKS: u32 = 20;
+const TILE_CEMENT: u32 = 21;
 
 impl Block {
     /// Anything that is not air.
@@ -71,6 +92,13 @@ impl Block {
                 | Block::Snow
                 | Block::Glass
                 | Block::Bedrock
+                | Block::Cobblestone
+                | Block::Clay
+                | Block::Mud
+                | Block::PolishedStone
+                | Block::StoneBrick
+                | Block::Bricks
+                | Block::Cement
         )
     }
 
@@ -119,6 +147,13 @@ impl Block {
             Block::Snow => TILE_SNOW,
             Block::Glass => TILE_GLASS,
             Block::Bedrock => TILE_BEDROCK,
+            Block::Cobblestone => TILE_COBBLESTONE,
+            Block::Clay => TILE_CLAY,
+            Block::Mud => TILE_MUD,
+            Block::PolishedStone => TILE_POLISHED_STONE,
+            Block::StoneBrick => TILE_STONE_BRICK,
+            Block::Bricks => TILE_BRICKS,
+            Block::Cement => TILE_CEMENT,
             _ => TILE_BLANK,
         }
     }
@@ -174,6 +209,13 @@ impl Block {
             Block::Farmland => [0.36, 0.24, 0.15],
             Block::WheatCrop => [0.55, 0.68, 0.22],
             Block::HandMill => [0.50, 0.49, 0.47],
+            Block::Cobblestone => [0.42, 0.42, 0.44],
+            Block::Clay => [0.60, 0.62, 0.66],
+            Block::Mud => [0.30, 0.24, 0.18],
+            Block::PolishedStone => [0.50, 0.51, 0.54],
+            Block::StoneBrick => [0.46, 0.47, 0.49],
+            Block::Bricks => [0.62, 0.30, 0.24],
+            Block::Cement => [0.66, 0.66, 0.64],
         }
     }
 
@@ -199,7 +241,16 @@ impl Block {
         match self {
             Block::Grass => Some(Block::Dirt),
             Block::Dirt => Some(Block::Dirt),
-            Block::Stone => Some(Block::Stone),
+            // Rock breaks into cobblestone; smelt it back to stone.
+            Block::Stone => Some(Block::Cobblestone),
+            Block::Cobblestone => Some(Block::Cobblestone),
+            // Clay is special-cased in `interact::grant_drop` (drops 4 clay balls).
+            Block::Clay => Some(Block::Clay),
+            Block::Mud => Some(Block::Mud),
+            Block::PolishedStone => Some(Block::PolishedStone),
+            Block::StoneBrick => Some(Block::StoneBrick),
+            Block::Bricks => Some(Block::Bricks),
+            Block::Cement => Some(Block::Cement),
             Block::Sand => Some(Block::Sand),
             Block::Snow => Some(Block::Snow),
             Block::Wood => Some(Block::Wood),
@@ -240,6 +291,13 @@ impl Block {
             Block::Farmland => "Farmland",
             Block::WheatCrop => "Wheat (crop)",
             Block::HandMill => "Hand Mill",
+            Block::Cobblestone => "Cobblestone",
+            Block::Clay => "Clay",
+            Block::Mud => "Mud",
+            Block::PolishedStone => "Polished Stone",
+            Block::StoneBrick => "Stone Bricks",
+            Block::Bricks => "Bricks",
+            Block::Cement => "Cement",
         }
     }
 }

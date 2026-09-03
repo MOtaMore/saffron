@@ -9,7 +9,7 @@ Convención sugerida: `<nombre_bloque>.png` para una textura única por bloque, 
 Formato: PNG, potencia de 2 (16×16 o 32×32), sin mipmaps pregenerados.
 El motor ya carga `ImagePlugin::default_nearest()` (filtrado nearest, sin desenfoque).
 
-**En uso.** `src/block_atlas.rs` monta en runtime un atlas de 15 columnas de
+**En uso.** `src/block_atlas.rs` monta en runtime un atlas de 22 columnas de
 16×16 con estos archivos:
 
 | Columna | Origen |
@@ -26,6 +26,13 @@ El motor ya carga `ImagePlugin::default_nearest()` (filtrado nearest, sin desenf
 | 12 | `glass.png` (bloque **Cristal**, `Block::Glass` — translúcido) |
 | 13 | `mother_rock.png` (bloque **Roca madre**, `Block::Bedrock`) |
 | 14 | blanco (bloques sin textura) |
+| 15 | `cobblestone.png` (**Piedra**, `Block::Cobblestone` — de picar Roca) |
+| 16 | `clay.png` (**Arcilla**, `Block::Clay` — orillas de lagos/ríos) |
+| 17 | `mud.png` (**Barro**, `Block::Mud` — riberas sin arena) |
+| 18 | `polished_stone.png` (**Roca Pulida**, `Block::PolishedStone`) |
+| 19 | `stone_brick.png` (**Ladrillos de Roca**, `Block::StoneBrick`) |
+| 20 | `bricks.png` (**Ladrillo**, `Block::Bricks`) |
+| 21 | `cement.png` (**Cemento**, `Block::Cement`) |
 
 Estos PNG también sirven de icono de inventario del bloque como objeto (su **cara
 lateral**), vía `block_side_sprite` en `src/item.rs`. Para césped/tronco/tierra

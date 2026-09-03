@@ -26,7 +26,11 @@ Documento vivo: edítalo para ir dándole forma al árbol de progresión.
 | Pasar sobre **papas silvestres** del suelo | — | **Papa** |
 | **Talar** un árbol | Hacha | **Tronco** (el tronco entero) |
 | Romper tierra / hierba | Pala o Pico | Tierra |
-| Romper piedra | Pico | Piedra |
+| Romper **Roca** (`Stone`) | Pico | **Piedra** (`Cobblestone`) |
+| Romper **Arcilla** | mano o Pala | **Bodoque de arcilla** ×4 |
+| Romper **Barro** | mano o Pala | Barro |
+| Romper un bloque de **Cemento** | Pico | **Ladrillo** (objeto) ×2 |
+| Picar bloques de **Piedra / Roca Pulida / Ladrillos de Roca / Ladrillo / Cemento** | Pico | el mismo bloque (Cemento → Ladrillos) |
 | **Pescar** | Caña de pescar | **Pescado** |
 | **Arar** tierra/hierba (clic izq.) | **Hoz de pedernal** | **Tierra arada** |
 | Plantar en tierra arada (clic izq.) | **Semillas** | crece **Trigo** (~3 min) |
@@ -36,6 +40,18 @@ Documento vivo: edítalo para ir dándole forma al árbol de progresión.
 | Matar **Vaca** | golpear | **Carne roja** ×3 + **Cuero** ×2 |
 | Matar **Oveja** | golpear | **Cordero** ×2 + **Lana** ×2 |
 | Matar **Pollo** | golpear | **Carne blanca** ×1 + **Pluma** ×2 |
+
+**Dónde aparecen los materiales nuevos** (generación del terreno, `worldgen.rs`):
+**Arcilla** en parches en la arena de playas y en los bajíos de lagos y ríos;
+**Barro** en las riberas de hierba pegadas a un río donde no llegó a haber arena.
+Los bloques de mampostería (Piedra, Cemento, Roca Pulida, Ladrillos de Roca,
+Ladrillo) forman las **ciudades en ruinas** que aparecen de vez en cuando en
+tierra firme — rejilla claustrofóbica de bloques de pisos de hormigón medio
+derrumbados, estilo soviético / *Samosbor*.
+
+**Aparición del jugador:** nunca bajo el agua — al empezar un mundo el jugador
+cae siempre sobre tierra firme (columna más cercana por encima del nivel del mar
+y fuera de cauces de río).
 
 ---
 
@@ -78,6 +94,22 @@ colocarse (útil de noche); se atraviesa y se rompe de un golpe.
 ### Masa ×1  *(sin forma)*
 `1 × Harina + 1 × Botella de agua`. La botella **vuelve vacía**.
 Se funde en el horno → **Pan**.
+
+### Bloque de Arcilla ×1
+```
+[ Bodoque ][ Bodoque ]
+[ Bodoque ][ Bodoque ]
+```
+4 **Bodoques de arcilla** se reagrupan en un bloque de **Arcilla** (el que pide el
+Cemento).
+
+### Ladrillo (bloque) ×4
+```
+[ Ladrillo ][ Ladrillo ]
+[ Ladrillo ][ Ladrillo ]
+```
+4 **Ladrillos** (bodoques de arcilla fundidos en el horno) → 4 bloques de
+**Ladrillo**.
 
 ### Cuchillo de pedernal ×1
 ```
@@ -137,6 +169,7 @@ hay varias estaciones cerca sale un selector.
 [ Piedra ][   ·    ][ Piedra ]
 [ Piedra ][ Piedra ][ Piedra ]
 ```
+8 × **Piedra** (`Cobblestone`, lo que da picar Roca).
 
 ### Hoz de pedernal ×1
 ```
@@ -152,9 +185,30 @@ Sólo sirve para arar tierra.
 [ Piedra ][ Palo   ][ Piedra ]
 [ Piedra ][ Piedra ][ Piedra ]
 ```
-Se coloca como el horno. Clic izquierdo **abre su panel**: ranura `[1]` para el
-Trigo, botón **MOLER** (mantener pulsado → gasta hambre) y ranura `[2]` con la
-Harina. Shift + mantener clic para romperlo (te devuelve el contenido).
+8 × **Piedra** (`Cobblestone`) + Palo. Se coloca como el horno. Clic izquierdo
+**abre su panel**: ranura `[1]` para el Trigo, botón **MOLER** (mantener pulsado →
+gasta hambre) y ranura `[2]` con la Harina. Shift + mantener clic para romperlo
+(te devuelve el contenido).
+
+### Roca Pulida ×4
+```
+[ Roca ][ Roca ]
+[ Roca ][ Roca ]
+```
+2×2 de **Roca** (`Stone`) → 4 **Roca Pulida**.
+
+### Ladrillos de Roca ×4
+```
+[ Roca Pulida ][ Roca Pulida ]
+[ Roca Pulida ][ Roca Pulida ]
+```
+2×2 de **Roca Pulida** → 4 **Ladrillos de Roca**.
+
+### Cemento (mortero) ×4  *(sin forma)*
+`2 × Arcilla (bloque) + 2 × Grava` → 4 **Cemento** (objeto, no bloque).
+**Uso:** con el Cemento en la mano, **clic izquierdo sobre un bloque de Ladrillo**
+lo fragua en un bloque de **Cemento** (gasta 1). Si ese bloque de Cemento se
+rompe, sólo devuelve **Ladrillos (objeto) ×2** — el mortero se pierde.
 
 ---
 
@@ -173,7 +227,9 @@ mientras arde.
 | Carne blanca (pollo) | **Carne blanca asada** |
 | **Masa** | **Pan** |
 | Arena | Cristal |
-| Grava | Piedra |
+| Grava | **Roca** (`Stone`) |
+| **Piedra** (`Cobblestone`) | **Roca** (`Stone`) |
+| **Bodoque de arcilla** | **Ladrillo** |
 | Tronco | Carbón vegetal |
 
 ### Combustibles
@@ -226,6 +282,8 @@ desde la orilla, vadeando o nadando.
 - [x] Botellas de agua (2 Cristal) — sed portátil
 - [x] Agricultura: hoz → tierra arada → trigo → molino → harina → masa → pan
 - [x] Cebo/alimentación de animales con su cultivo favorito
+- [x] Cadena de mampostería: Roca → Piedra → Roca Pulida → Ladrillos de Roca;
+      Arcilla → Bodoque → Ladrillo → bloque de Ladrillo; Cemento (Arcilla + Grava)
 - [ ] Herramientas de piedra (tras las de pedernal)
 - [ ] Cuero → armadura / mochila · Lana → cama · Pluma → flechas mejores
 - [ ] Cama, puerta, escalera…

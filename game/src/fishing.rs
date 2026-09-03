@@ -5,6 +5,7 @@
 
 use std::collections::HashSet;
 
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
 use crate::block::Block;
@@ -111,11 +112,19 @@ fn setup_fishing_assets(
 
 /// All fishing input: cast, reel-in-empty, or land the fish, depending on phase.
 #[allow(clippy::too_many_arguments)]
+/// Bundled "is a menu eating input?" resources, to keep `cast` under Bevy's
+/// 16-parameter system limit.
+#[derive(SystemParam)]
+struct CastGuards<'w> {
+    inv_open: Res<'w, InventoryOpen>,
+    container_open: Res<'w, OpenContainer>,
+    station_menu: Res<'w, StationChoices>,
+    cam_mode: Res<'w, crate::firstperson::CameraMode>,
+}
+
 fn cast(
     mouse: Res<ButtonInput<MouseButton>>,
-    inv_open: Res<InventoryOpen>,
-    container_open: Res<OpenContainer>,
-    station_menu: Res<StationChoices>,
+    guards: CastGuards,
     assets: Res<FishAssets>,
     mut state: ResMut<FishingState>,
     mut inventory: ResMut<Inventory>,
@@ -129,7 +138,7 @@ fn cast(
     world: Res<ChunkWorld>,
     mut rng: Local<u32>,
 ) {
-    if inv_open.0 || container_open.0.is_some() || !station_menu.0.is_empty() {
+    if guards.inv_open.0 || guards.container_open.0.is_some() || !guards.station_menu.0.is_empty() {
         return;
     }
     if !mouse.just_pressed(MouseButton::Left) {
@@ -169,7 +178,7 @@ fn cast(
     let (Ok(window), Ok((camera, cam_tf))) = (windows.single(), camera_q.single()) else {
         return;
     };
-    let Some(cursor) = window.cursor_position() else {
+    let Some(cursor) = crate::firstperson::aim_point(window, &guards.cam_mode) else {
         return;
     };
     if cursor.y > window.height() - HOTBAR_GUARD_PX {

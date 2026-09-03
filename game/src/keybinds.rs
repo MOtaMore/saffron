@@ -55,10 +55,11 @@ pub enum Action {
     ViewRaise,
     VisionCutout,
     QuickSave,
+    FirstPerson,
 }
 
 impl Action {
-    pub const ALL: [Action; 14] = [
+    pub const ALL: [Action; 15] = [
         Action::Run,
         Action::Jump,
         Action::Inventory,
@@ -73,6 +74,7 @@ impl Action {
         Action::ViewRaise,
         Action::VisionCutout,
         Action::QuickSave,
+        Action::FirstPerson,
     ];
 
     /// Label shown on the Controls screen.
@@ -92,6 +94,7 @@ impl Action {
             Action::ViewRaise => "Raise view ceiling",
             Action::VisionCutout => "Vision cutout",
             Action::QuickSave => "Quick save",
+            Action::FirstPerson => "First-person view",
         }
     }
 
@@ -111,6 +114,7 @@ impl Action {
             Action::ViewRaise => KeyCode::BracketRight,
             Action::VisionCutout => KeyCode::KeyK,
             Action::QuickSave => KeyCode::F5,
+            Action::FirstPerson => KeyCode::KeyV,
         }
     }
 }

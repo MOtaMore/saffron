@@ -85,6 +85,7 @@ fn open_station(
 fn station_key(
     keys: Res<ButtonInput<KeyCode>>,
     binds: Res<crate::keybinds::Keybinds>,
+    cam_mode: Res<crate::firstperson::CameraMode>,
     world: Res<ChunkWorld>,
     player_q: Query<&Transform, With<Player>>,
     mut choices: ResMut<StationChoices>,
@@ -93,7 +94,14 @@ fn station_key(
     mut container: ResMut<OpenContainer>,
     mut inventory: ResMut<Inventory>,
 ) {
-    if !binds.just_pressed(&keys, crate::keybinds::Action::Interact) {
+    // In first person the `Interact` default (`W`) is the forward key, so use
+    // `F` there instead.
+    let pressed = if cam_mode.first_person {
+        keys.just_pressed(KeyCode::KeyF)
+    } else {
+        binds.just_pressed(&keys, crate::keybinds::Action::Interact)
+    };
+    if !pressed {
         return;
     }
 

@@ -53,6 +53,27 @@ impl Biome {
             _ => 0.0,
         }
     }
+
+    /// Nombre para el chat / comandos (los comandos van en inglés).
+    pub fn en_name(self) -> &'static str {
+        match self {
+            Biome::Plains => "plains",
+            Biome::Forest => "forest",
+            Biome::Desert => "desert",
+            Biome::Snow => "snow",
+        }
+    }
+
+    /// Interpreta el argumento de `/biome <x>`.
+    pub fn parse(s: &str) -> Option<Biome> {
+        Some(match s.trim().to_lowercase().as_str() {
+            "plains" | "plain" | "grassland" => Biome::Plains,
+            "forest" | "woods" => Biome::Forest,
+            "desert" | "sand" => Biome::Desert,
+            "snow" | "snowy" => Biome::Snow,
+            _ => return None,
+        })
+    }
 }
 
 /// The world seed. Set by the menu / a loaded save before entering `Playing`.
@@ -82,6 +103,9 @@ pub struct WorldGen {
     snow: Perlin,
     rock: Perlin,
     gravel: Perlin,
+    clay: Perlin,
+    mud: Perlin,
+    ruin: Perlin,
     cave_a: Perlin,
     cave_b: Perlin,
     cavern: Perlin,
@@ -96,6 +120,32 @@ const REGION_CHUNKS: i32 = 4;
 /// Regions that attempt a structure, per mille (before slope / Y-range checks).
 const STRUCT_PER_MIL: u64 = 130;
 
+/// Chunks per axis in one ruined-city region — one city at most, anchored so its
+/// footprint never leaves the region (keeps chunk generation independent).
+const CITY_REGION_CHUNKS: i32 = 16;
+/// City regions that actually hold ruins, per mille (before the flatness gate).
+const CITY_PER_MIL: u64 = 90;
+/// Storey height of the apartment blocks.
+const CITY_FLOOR_H: i32 = 3;
+/// Apartment-block footprint (per side), in blocks.
+const BUILD_MIN: i32 = 15;
+const BUILD_MAX: i32 = 22;
+/// Gap between two blocks of the *same* manzana (kept tight — claustrophobic).
+const BUILD_GAP: i32 = 2;
+/// Street width between one manzana and the next.
+const STREET_W: i32 = 9;
+/// Depth of a room; interior partitions sit every `ROOM_STEP + 1` blocks.
+const ROOM_STEP: i32 = 3;
+/// Most apartment blocks per axis inside one manzana (3×3 = 9 plots, 3..7 used).
+const SUB_MAX: i32 = 3;
+const BUILD_SLOT: i32 = BUILD_MAX + BUILD_GAP;
+const MANZANA_SLOT: i32 = SUB_MAX * BUILD_SLOT;
+
+/// Manzanas per axis in a city (2..3 each).
+fn city_grid(ch: u64) -> (i32, i32) {
+    (2 + ((ch >> 4) & 1) as i32, 2 + ((ch >> 7) & 1) as i32)
+}
+
 fn region_hash(seed: u32, rx: i32, ry: i32) -> u64 {
     let mut z = (seed as u64)
         .wrapping_mul(0x9E37_79B9_7F4A_7C15)
@@ -104,6 +154,86 @@ fn region_hash(seed: u32, rx: i32, ry: i32) -> u64 {
     z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
     z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
     z ^ (z >> 31)
+}
+
+fn city_hash(seed: u32, rx: i32, ry: i32) -> u64 {
+    region_hash(seed ^ 0x00C1_7000, rx, ry)
+}
+
+/// `(anchor_x, anchor_z, width, depth)` of the ruined city in region `(rx, ry)`,
+/// or `None` if that region has none. The city is a grid of *manzanas* (city
+/// blocks) separated by streets, anchored fully inside its region so every chunk
+/// can reconstruct it independently.
+fn city_anchor(seed: u32, rx: i32, ry: i32) -> Option<(i32, i32, i32, i32)> {
+    let ch = city_hash(seed, rx, ry);
+    if ch % 1000 >= CITY_PER_MIL {
+        return None;
+    }
+    let (mcols, mrows) = city_grid(ch);
+    let city_w = mcols * MANZANA_SLOT + (mcols - 1) * STREET_W;
+    let city_d = mrows * MANZANA_SLOT + (mrows - 1) * STREET_W;
+    let span = CITY_REGION_CHUNKS * CHUNK_SIZE;
+    let ax = rx * span + ((ch >> 20) % (span - city_w).max(1) as u64) as i32;
+    let az = ry * span + ((ch >> 36) % (span - city_d).max(1) as u64) as i32;
+    Some((ax, az, city_w, city_d))
+}
+
+/// Vertical material gradient of a ruined apartment block: a stone-brick base,
+/// a cement midsection, plain brick up top. `k` is the storey index.
+fn ruin_material(k: i32, standing: i32) -> Block {
+    let third = (standing.max(1) + 2) / 3;
+    if k < third {
+        Block::StoneBrick
+    } else if k < 2 * third {
+        Block::Cement
+    } else {
+        Block::Bricks
+    }
+}
+
+/// splitmix64 finalizer — a per-building spread from the city hash.
+fn mix64(mut z: u64) -> u64 {
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+/// Recorre columnas en anillos cuadrados (paso `step`) alrededor de `from` y
+/// devuelve la más cercana que cumpla `hit`. `None` si ninguna en `max_rings`.
+fn ring_nearest(
+    from: IVec2,
+    step: i32,
+    max_rings: i32,
+    mut hit: impl FnMut(i32, i32) -> bool,
+) -> Option<IVec2> {
+    if hit(from.x, from.y) {
+        return Some(from);
+    }
+    for r in 1..=max_rings {
+        let rr = r * step;
+        let mut best: Option<(i64, IVec2)> = None;
+        for i in -r..=r {
+            let o = i * step;
+            for (x, z) in [
+                (from.x + o, from.y - rr),
+                (from.x + o, from.y + rr),
+                (from.x - rr, from.y + o),
+                (from.x + rr, from.y + o),
+            ] {
+                if hit(x, z) {
+                    let (dx, dz) = ((x - from.x) as i64, (z - from.y) as i64);
+                    let d = dx * dx + dz * dz;
+                    if best.map_or(true, |(bd, _)| d < bd) {
+                        best = Some((d, IVec2::new(x, z)));
+                    }
+                }
+            }
+        }
+        if best.is_some() {
+            return best.map(|(_, p)| p);
+        }
+    }
+    None
 }
 
 /// One resolved terrain column.
@@ -149,6 +279,9 @@ impl WorldGen {
             snow: Perlin::new(seed.wrapping_add(404)),
             rock: Perlin::new(seed.wrapping_add(451)),
             gravel: Perlin::new(seed.wrapping_add(505)),
+            clay: Perlin::new(seed.wrapping_add(521)),
+            mud: Perlin::new(seed.wrapping_add(541)),
+            ruin: Perlin::new(seed.wrapping_add(809)),
             cave_a: Perlin::new(seed.wrapping_add(601)),
             cave_b: Perlin::new(seed.wrapping_add(619)),
             cavern: Perlin::new(seed.wrapping_add(637)),
@@ -197,6 +330,139 @@ impl WorldGen {
     /// Terrain surface height (index of the topmost solid block) at a world column.
     pub fn surface_height(&self, x: i32, z: i32) -> i32 {
         self.column(x, z).height
+    }
+
+    /// Dry, solid ground: surface above the waterline and not a river bed.
+    pub fn is_land(&self, x: i32, z: i32) -> bool {
+        let c = self.column(x, z);
+        c.height > self.sea_level + 1 && c.river_t <= 0.0
+    }
+
+    /// Nearest dry-land column to `(ox, oz)`, spiralling outward. Used so the
+    /// player never spawns underwater. Falls back to the origin column.
+    pub fn find_land(&self, ox: i32, oz: i32) -> (i32, i32) {
+        if self.is_land(ox, oz) {
+            return (ox, oz);
+        }
+        for r in 1..128 {
+            for d in -r..=r {
+                for (x, z) in [
+                    (ox + d, oz - r),
+                    (ox + d, oz + r),
+                    (ox - r, oz + d),
+                    (ox + r, oz + d),
+                ] {
+                    if self.is_land(x, z) {
+                        return (x, z);
+                    }
+                }
+            }
+        }
+        (ox, oz)
+    }
+
+    // --- Búsquedas para los comandos de chat (`/bioma`, `/estructura`, …) ---
+
+    /// Columna del bioma `want` más cercana a `from`, como `[x, y, z]` con `y`
+    /// dos bloques por encima de la superficie (para caer encima). `None` si no
+    /// aparece en el radio de búsqueda (~5 km).
+    pub fn nearest_biome(&self, from: IVec2, want: Biome) -> Option<IVec3> {
+        let p = ring_nearest(from, 8, 640, |x, z| {
+            let h = self.surface_height(x, z);
+            h > self.sea_level && self.biome_at(x, z, h) == want
+        })?;
+        Some(IVec3::new(p.x, self.surface_height(p.x, p.y) + 2, p.y))
+    }
+
+    /// Ancla de la estructura de librería generable más cercana. `None` si la
+    /// librería está vacía o no hay ninguna en el radio.
+    pub fn nearest_structure(&self, from: IVec2) -> Option<IVec3> {
+        if self.structures.is_empty() {
+            return None;
+        }
+        let span = REGION_CHUNKS * CHUNK_SIZE;
+        self.nearest_region(from, span, 56, |rx, ry| self.structure_at_region(rx, ry))
+    }
+
+    /// Centro de la ciudad en ruinas más cercana (sobre tierra firme).
+    pub fn nearest_ruined_city(&self, from: IVec2) -> Option<IVec3> {
+        let span = CITY_REGION_CHUNKS * CHUNK_SIZE;
+        self.nearest_region(from, span, 40, |rx, ry| {
+            let (ax, az, w, d) = city_anchor(self.seed, rx, ry)?;
+            let (cx, cz) = (ax + w / 2, az + d / 2);
+            self.is_land(cx, cz)
+                .then(|| IVec3::new(cx, self.surface_height(cx, cz) + 2, cz))
+        })
+    }
+
+    /// Recorre las regiones de tamaño `span` en anillos crecientes desde la de
+    /// `from` y devuelve el resultado no vacío más cercano.
+    fn nearest_region(
+        &self,
+        from: IVec2,
+        span: i32,
+        max_rings: i32,
+        mut at: impl FnMut(i32, i32) -> Option<IVec3>,
+    ) -> Option<IVec3> {
+        let (frx, fry) = (from.x.div_euclid(span), from.y.div_euclid(span));
+        for r in 0..=max_rings {
+            let mut best: Option<(i64, IVec3)> = None;
+            for rx in frx - r..=frx + r {
+                for ry in fry - r..=fry + r {
+                    let edge = rx == frx - r || rx == frx + r || ry == fry - r || ry == fry + r;
+                    if r > 0 && !edge {
+                        continue;
+                    }
+                    if let Some(p) = at(rx, ry) {
+                        let (dx, dz) = ((p.x - from.x) as i64, (p.z - from.y) as i64);
+                        let d = dx * dx + dz * dz;
+                        if best.map_or(true, |(bd, _)| d < bd) {
+                            best = Some((d, p));
+                        }
+                    }
+                }
+            }
+            if best.is_some() {
+                return best.map(|(_, p)| p);
+            }
+        }
+        None
+    }
+
+    /// El ancla `[x, y, z]` de la estructura que `stamp_structures` colocaría en
+    /// la región `(rx, ry)`, o `None` (mismo dado + puertas que el generador).
+    fn structure_at_region(&self, rx: i32, ry: i32) -> Option<IVec3> {
+        let lib = &*self.structures;
+        if lib.is_empty() {
+            return None;
+        }
+        let h = region_hash(self.seed, rx, ry);
+        if h % 1000 >= STRUCT_PER_MIL {
+            return None;
+        }
+        let s = lib.pick(((h >> 12) & 0xFFFF) as f32 / 65536.0)?;
+        let [sx, sy, sz] = s.size;
+        if sx <= 0 || sy <= 0 || sz <= 0 {
+            return None;
+        }
+        let span = REGION_CHUNKS * CHUNK_SIZE;
+        let ax = rx * span + ((h >> 24) % (span - sx).max(1) as u64) as i32;
+        let az = ry * span + ((h >> 40) % (span - sz).max(1) as u64) as i32;
+        let hs = [
+            self.surface_height(ax, az),
+            self.surface_height(ax + sx - 1, az),
+            self.surface_height(ax, az + sz - 1),
+            self.surface_height(ax + sx - 1, az + sz - 1),
+            self.surface_height(ax + sx / 2, az + sz / 2),
+        ];
+        let lo = *hs.iter().min().unwrap();
+        let hi = *hs.iter().max().unwrap();
+        let r = &s.spawn;
+        if hi - lo > r.max_slope || lo < r.min_y || lo > r.max_y {
+            return None;
+        }
+        let ay = (lo - r.sink).max(1);
+        Some(IVec3::new(ax, ay + 2, az))
     }
 
     /// Altitude (noisy) above which the surface turns to snow.
@@ -279,7 +545,7 @@ impl WorldGen {
                     } else if y > h {
                         if y <= sea { Block::Water } else { Block::Air }
                     } else if y == h {
-                        if is_river {
+                        let mut s = if is_river {
                             Block::Sand // river bed
                         } else {
                             let mut s = biome.surface(h, sea);
@@ -291,7 +557,24 @@ impl WorldGen {
                                 s = Block::Stone;
                             }
                             s
+                        };
+                        // Clay pockets in the sand of lake / river shallows and
+                        // beaches (patchy).
+                        if s == Block::Sand
+                            && h <= sea + 1
+                            && self.clay.get([fx * 0.075, fz * 0.075]) > 0.5
+                        {
+                            s = Block::Clay;
                         }
+                        // Muddy river banks: grassy ground right beside a river,
+                        // where the beach rule laid down no sand.
+                        if s == Block::Grass
+                            && (0.02f32..0.55).contains(&col.river_t)
+                            && self.mud.get([fx * 0.11, fz * 0.11]) > 0.0
+                        {
+                            s = Block::Mud;
+                        }
+                        s
                     } else if y >= h - 3 {
                         // High ground is rocky right under the surface.
                         if h >= 84 { Block::Stone } else { biome.filler() }
@@ -354,7 +637,338 @@ impl WorldGen {
         }
 
         self.stamp_structures(coord, &mut data);
+        self.stamp_ruins(coord, &mut data);
         data
+    }
+
+    /// Stamps the slice of a **ruined Soviet-style city** overlapping this chunk,
+    /// when the chunk's city-region rolls one. A cramped grid of near-identical
+    /// concrete apartment blocks (khrushchyovka) on narrow streets, half of them
+    /// collapsed — the claustrophobic early-USSR / *Samosbor* mood. Built from
+    /// the new masonry blocks (cobblestone, cement, polished stone, stone brick,
+    /// brick). Fully deterministic from the seed, exactly like `stamp_structures`:
+    /// every client rebuilds the same city with no networking or save state.
+    fn stamp_ruins(&self, coord: ChunkCoord, data: &mut ChunkData) {
+        let (rx, ry) = (
+            coord.x.div_euclid(CITY_REGION_CHUNKS),
+            coord.y.div_euclid(CITY_REGION_CHUNKS),
+        );
+        let Some((ax, az, city_w, city_d)) = city_anchor(self.seed, rx, ry) else {
+            return;
+        };
+        let ch = city_hash(self.seed, rx, ry);
+        let (mcols, mrows) = city_grid(ch);
+
+        let (cx0, cz0) = (coord.x * CHUNK_SIZE, coord.y * CHUNK_SIZE);
+        // Bail unless this chunk actually overlaps the city footprint.
+        if cx0 + CHUNK_SIZE <= ax
+            || cx0 >= ax + city_w
+            || cz0 + CHUNK_SIZE <= az
+            || cz0 >= az + city_d
+        {
+            return;
+        }
+
+        // Reject the whole city only if its heart is in the water — each block
+        // levels to its own footing, so rolling ground is fine.
+        if !self.is_land(ax + city_w / 2, az + city_d / 2) {
+            return;
+        }
+
+        let local = |wx: i32, wz: i32| -> Option<(i32, i32)> {
+            let (lx, lz) = (wx - cx0, wz - cz0);
+            ((0..CHUNK_SIZE).contains(&lx) && (0..CHUNK_SIZE).contains(&lz)).then_some((lx, lz))
+        };
+        let put = |data: &mut ChunkData, lx: i32, wy: i32, lz: i32, b: Block| {
+            if (1..CHUNK_HEIGHT).contains(&wy) {
+                data.set(lx, wy, lz, b);
+            }
+        };
+        // Ruin noise: a cell survives when the field is *below* `keep`.
+        let hole = |wx: i32, wy: i32, wz: i32, keep: f64| -> bool {
+            self.ruin
+                .get([wx as f64 * 0.28, wy as f64 * 0.28, wz as f64 * 0.28])
+                > keep
+        };
+
+        // --- Ground cover: grass over the manzanas, gravel streets between --
+        let period = MANZANA_SLOT + STREET_W;
+        for wx in ax..ax + city_w {
+            for wz in az..az + city_d {
+                let Some((lx, lz)) = local(wx, wz) else {
+                    continue;
+                };
+                let g = self.surface_height(wx, wz);
+                if g <= self.sea_level {
+                    continue; // leave open water alone
+                }
+                let in_manzana = (wx - ax).rem_euclid(period) < MANZANA_SLOT
+                    && (wz - az).rem_euclid(period) < MANZANA_SLOT;
+                let cover = if in_manzana {
+                    Block::Grass
+                } else {
+                    Block::Gravel // path between the manzanas
+                };
+                put(data, lx, g, lz, cover);
+            }
+        }
+
+        // --- Manzanas (city blocks) -----------------------------------
+        let span_range = (BUILD_MAX - BUILD_MIN + 1) as u64;
+        for mbc in 0..mcols {
+            for mbr in 0..mrows {
+                let m_x0 = ax + mbc * (MANZANA_SLOT + STREET_W);
+                let m_z0 = az + mbr * (MANZANA_SLOT + STREET_W);
+                if cx0 + CHUNK_SIZE <= m_x0
+                    || cx0 >= m_x0 + MANZANA_SLOT
+                    || cz0 + CHUNK_SIZE <= m_z0
+                    || cz0 >= m_z0 + MANZANA_SLOT
+                {
+                    continue; // this chunk doesn't touch the manzana
+                }
+
+                let mh = mix64(ch ^ ((mbc as u64) << 16) ^ ((mbr as u64) << 32) ^ 0x0B10_C0DE);
+                let per_manzana = 3 + (mh % 5) as i32; // 3..7 apartment blocks
+                let sub_cols = if per_manzana <= 6 { 2 } else { SUB_MAX };
+                let sub_rows = (per_manzana + sub_cols - 1) / sub_cols;
+
+                for sc in 0..sub_cols {
+                    for sr in 0..sub_rows {
+                        if sr * sub_cols + sc >= per_manzana {
+                            continue; // empty plot in the manzana
+                        }
+                        let bh =
+                            mix64(mh ^ ((sc as u64) << 8) ^ ((sr as u64) << 24) ^ 0xB1D6_5EED);
+                        let bw = BUILD_MIN + ((bh & 0xFF) % span_range) as i32;
+                        let bd = BUILD_MIN + (((bh >> 8) & 0xFF) % span_range) as i32;
+                        let bx0 = m_x0 + sc * BUILD_SLOT;
+                        let bz0 = m_z0 + sr * BUILD_SLOT;
+                        let bx1 = bx0 + bw - 1;
+                        let bz1 = bz0 + bd - 1;
+                        if cx0 + CHUNK_SIZE <= bx0
+                            || cx0 > bx1
+                            || cz0 + CHUNK_SIZE <= bz0
+                            || cz0 > bz1
+                        {
+                            continue; // building clear of this chunk
+                        }
+
+                        let floors = 4 + ((bh >> 16) & 0xFF) % 9; // 4..12
+                        let dmg = ((bh >> 24) & 0xFF) as f64 / 256.0;
+                        let razed = ((bh >> 40) & 0xFF) < 26; // ~10 %
+
+                        // Level each building to its own footing.
+                        let bcs = [
+                            self.surface_height(bx0, bz0),
+                            self.surface_height(bx1, bz0),
+                            self.surface_height(bx0, bz1),
+                            self.surface_height(bx1, bz1),
+                            self.surface_height((bx0 + bx1) / 2, (bz0 + bz1) / 2),
+                        ];
+                        let blo = *bcs.iter().min().unwrap();
+                        let bhi = *bcs.iter().max().unwrap();
+                        if blo <= self.sea_level + 1 || bhi - blo > 9 {
+                            continue; // in the water, or ground too broken
+                        }
+                        let base_y = bhi - 1;
+
+                        // Concrete podium down to the terrain.
+                        for wx in bx0..=bx1 {
+                            for wz in bz0..=bz1 {
+                                let Some((lx, lz)) = local(wx, wz) else {
+                                    continue;
+                                };
+                                let g = self.surface_height(wx, wz);
+                                let mut wy = base_y;
+                                while wy >= 1 && wy > g - 4 {
+                                    put(data, lx, wy, lz, Block::Cobblestone);
+                                    wy -= 1;
+                                }
+                            }
+                        }
+
+                        if razed {
+                            for wx in bx0..=bx1 {
+                                for wz in bz0..=bz1 {
+                                    let Some((lx, lz)) = local(wx, wz) else {
+                                        continue;
+                                    };
+                                    let n = self.ruin.get([wx as f64 * 0.4, wz as f64 * 0.4]);
+                                    let pile = ((n * 0.5 + 0.5) * 3.0) as i32;
+                                    for k in 0..pile {
+                                        put(data, lx, base_y + k, lz, Block::Cobblestone);
+                                    }
+                                }
+                            }
+                            continue;
+                        }
+
+                        let standing =
+                            ((floors as f64) * (1.0 - dmg * 0.6)).ceil().max(1.0) as i32;
+                        let top = base_y + standing * CITY_FLOOR_H;
+
+                        // Hollow the interior (clear terrain up through the high corner).
+                        for wx in bx0 + 1..bx1 {
+                            for wz in bz0 + 1..bz1 {
+                                let Some((lx, lz)) = local(wx, wz) else {
+                                    continue;
+                                };
+                                for wy in base_y..=(top + 1).max(bhi + 1) {
+                                    put(data, lx, wy, lz, Block::Air);
+                                }
+                            }
+                        }
+
+                        // Perimeter walls — material graded by height, plus
+                        // windows, a ground-floor doorway and shelled-out gaps.
+                        for wy in base_y..=top {
+                            let k = (wy - base_y) / CITY_FLOOR_H;
+                            let m = ruin_material(k, standing);
+                            let level = (wy - base_y).rem_euclid(CITY_FLOOR_H);
+                            let up = (wy - base_y) as f64 / (top - base_y).max(1) as f64;
+                            for wx in bx0..=bx1 {
+                                for wz in bz0..=bz1 {
+                                    if wx != bx0 && wx != bx1 && wz != bz0 && wz != bz1 {
+                                        continue;
+                                    }
+                                    let Some((lx, lz)) = local(wx, wz) else {
+                                        continue;
+                                    };
+                                    if wz == bz0 && wy < base_y + 3 && wx == bx0 + bw / 2 {
+                                        put(data, lx, wy, lz, Block::Air); // doorway
+                                        continue;
+                                    }
+                                    let along = if wx == bx0 || wx == bx1 {
+                                        wz - bz0
+                                    } else {
+                                        wx - bx0
+                                    };
+                                    if level == 1 && wy > base_y + 1 && along % 3 == 1 {
+                                        put(data, lx, wy, lz, Block::Air); // window
+                                        continue;
+                                    }
+                                    if hole(wx, wy, wz, 0.62 - dmg * 0.35 - up * 0.15) {
+                                        continue; // shelled-out masonry
+                                    }
+                                    put(data, lx, wy, lz, m);
+                                }
+                            }
+                        }
+
+                        // Cramped Soviet interior: a full grid of thin partitions
+                        // (rooms `ROOM_STEP` deep), a 1-wide corridor down the long
+                        // axis, and a doorway through the middle of every wall run.
+                        let hall_along_x = bw >= bd;
+                        let hall = if hall_along_x { bz0 + bd / 2 } else { bx0 + bw / 2 };
+                        let step = ROOM_STEP + 1;
+                        for k in 0..standing {
+                            let fy = base_y + k * CITY_FLOOR_H;
+                            let m = ruin_material(k, standing);
+                            for wy in (fy + 1)..(fy + CITY_FLOOR_H) {
+                                for wx in (bx0 + 1)..bx1 {
+                                    for wz in (bz0 + 1)..bz1 {
+                                        let gx = (wx - bx0) % step == 0;
+                                        let gz = (wz - bz0) % step == 0;
+                                        if !gx && !gz {
+                                            continue; // inside a room
+                                        }
+                                        if (hall_along_x && wz == hall)
+                                            || (!hall_along_x && wx == hall)
+                                        {
+                                            continue; // main corridor
+                                        }
+                                        let door = if gx {
+                                            (wz - bz0) % step == step / 2
+                                        } else {
+                                            (wx - bx0) % step == step / 2
+                                        };
+                                        if door && wy - fy <= 2 {
+                                            continue; // doorway
+                                        }
+                                        if hole(wx, wy, wz, 0.82 - dmg * 0.3) {
+                                            continue;
+                                        }
+                                        let Some((lx, lz)) = local(wx, wz) else {
+                                            continue;
+                                        };
+                                        put(data, lx, wy, lz, m);
+                                    }
+                                }
+                            }
+                        }
+
+                        // Storey slabs — the ground floor is solid, upper floors
+                        // cave in progressively, and the roof is always at least
+                        // half gone (holes widen with damage and height).
+                        for k in 0..=standing {
+                            let fy = base_y + k * CITY_FLOOR_H;
+                            if fy > top {
+                                break;
+                            }
+                            let m = ruin_material((k - 1).max(0), standing);
+                            let keep = if k == 0 {
+                                0.98
+                            } else if k == standing {
+                                dmg * 0.5 // roof: about half collapsed, worse with damage
+                            } else {
+                                let frac = k as f64 / standing.max(1) as f64;
+                                0.18 + frac * 0.5 + dmg * 0.25
+                            };
+                            for wx in bx0..=bx1 {
+                                for wz in bz0..=bz1 {
+                                    let Some((lx, lz)) = local(wx, wz) else {
+                                        continue;
+                                    };
+                                    if k == 0 {
+                                        put(data, lx, fy, lz, Block::Cement);
+                                    } else if !hole(wx, fy, wz, keep) {
+                                        put(data, lx, fy, lz, m);
+                                    }
+                                }
+                            }
+                        }
+
+                        // Stairwell in an interior corner — two steps and a hole
+                        // through each slab above, so every storey is reachable.
+                        let (sx0, sz0) = (bx0 + 1, bz0 + 1);
+                        for k in 0..standing {
+                            let fy = base_y + k * CITY_FLOOR_H;
+                            let m = ruin_material(k, standing);
+                            for dz in 0..2 {
+                                for s in 0i32..2 {
+                                    if let Some((lx, lz)) = local(sx0 + s, sz0 + dz) {
+                                        put(data, lx, fy + 1 + s, lz, m); // step
+                                        put(data, lx, fy + 2 + s, lz, Block::Air);
+                                        put(data, lx, fy + 3 + s, lz, Block::Air);
+                                    }
+                                }
+                                for dx in 0..3 {
+                                    if let Some((lx, lz)) = local(sx0 + dx, sz0 + dz) {
+                                        put(data, lx, fy + CITY_FLOOR_H, lz, Block::Air);
+                                    }
+                                }
+                            }
+                        }
+
+                        // A chest or two on the ground floor — empty for now
+                        // (loot comes later). They still open like any chest.
+                        let n_chests = (bh >> 50) % 3; // 0..2
+                        let spots = [
+                            (bx1 - 1, bz0 + 1),
+                            (bx0 + 1, bz1 - 1),
+                            (bx1 - 1, bz1 - 1),
+                        ];
+                        for &(cwx, cwz) in spots.iter().take(n_chests as usize) {
+                            if let Some((lx, lz)) = local(cwx, cwz) {
+                                put(data, lx, base_y + 1, lz, Block::Chest);
+                                put(data, lx, base_y + 2, lz, Block::Air);
+                                put(data, lx, base_y + 3, lz, Block::Air);
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Stamps the slice of any library structure whose footprint overlaps this
@@ -444,6 +1058,16 @@ impl WorldGen {
             }
         }
     }
+}
+
+/// A dry-land spawn point near the world origin for `seed`, as `[x, y, z]`
+/// (`y` is a few blocks above the surface so the player drops onto it). Builds a
+/// throwaway generator — cheap, called once per join. Used by the dedicated
+/// server, which never builds a [`WorldGenHandle`].
+pub fn land_spawn(seed: u32) -> [f32; 3] {
+    let wg = WorldGen::new(seed, Arc::new(crate::structure::Library::default()));
+    let (x, z) = wg.find_land(0, 0);
+    [x as f32 + 0.5, wg.surface_height(x, z) as f32 + 3.0, z as f32 + 0.5]
 }
 
 fn lerp(a: f64, b: f64, t: f64) -> f64 {
@@ -552,4 +1176,95 @@ mod tests {
         }
         assert!(found > 0, "no structure blocks generated");
     }
+
+    #[test]
+    fn ruined_city_is_deterministic_and_built_from_masonry() {
+        use std::sync::Arc;
+        let seed = 0xACE1_2345u32;
+        let wg = WorldGen::new(seed, Arc::new(Library::default()));
+
+        // Find a city-region that actually builds (rolled + heart on dry land).
+        let mut target = None;
+        'scan: for rx in -20..20 {
+            for ry in -20..20 {
+                if let Some((ax, az, w, d)) = city_anchor(seed, rx, ry) {
+                    if wg.is_land(ax + w / 2, az + d / 2) {
+                        target = Some((rx, ry));
+                        break 'scan;
+                    }
+                }
+            }
+        }
+        let (rx, ry) = target.expect("no buildable city region found");
+        let (ax, az, cw, cd) = city_anchor(seed, rx, ry).unwrap();
+
+        // Assemble the city's bounding box into one array so we can check
+        // neighbours across chunk seams.
+        let (x0, z0) = (ax - 4, az - 4);
+        let (sx, sz) = (cw as usize + 8, cd as usize + 8);
+        let (y0, sy) = (20usize, 110usize);
+        let idx = |x: usize, y: usize, z: usize| (y * sz + z) * sx + x;
+        let mut vox = vec![Block::Air; sx * sy * sz];
+
+        for cx in x0.div_euclid(CHUNK_SIZE)..=(x0 + sx as i32).div_euclid(CHUNK_SIZE) {
+            for cz in z0.div_euclid(CHUNK_SIZE)..=(z0 + sz as i32).div_euclid(CHUNK_SIZE) {
+                let a = wg.generate(IVec2::new(cx, cz));
+                let b = wg.generate(IVec2::new(cx, cz));
+                for ly in 0..CHUNK_HEIGHT {
+                    for lz in 0..CHUNK_SIZE {
+                        for lx in 0..CHUNK_SIZE {
+                            let blk = a.get(lx, ly, lz);
+                            assert_eq!(blk, b.get(lx, ly, lz), "non-deterministic ruin");
+                            let gx = cx * CHUNK_SIZE + lx - x0;
+                            let gz = cz * CHUNK_SIZE + lz - z0;
+                            let gy = ly - y0 as i32;
+                            if (0..sx as i32).contains(&gx)
+                                && (0..sz as i32).contains(&gz)
+                                && (0..sy as i32).contains(&gy)
+                            {
+                                vox[idx(gx as usize, gy as usize, gz as usize)] = blk;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let is_masonry = |b: Block| {
+            matches!(
+                b,
+                Block::Cobblestone
+                    | Block::Cement
+                    | Block::PolishedStone
+                    | Block::StoneBrick
+                    | Block::Bricks
+            )
+        };
+
+        let mut masonry = 0usize;
+        let mut interior = 0usize; // air cells walled in on all four sides + a floor
+        for y in 1..sy - 1 {
+            for z in 4..sz - 4 {
+                for x in 4..sx - 4 {
+                    let b = vox[idx(x, y, z)];
+                    if is_masonry(b) {
+                        masonry += 1;
+                    }
+                    if b == Block::Air
+                        && is_masonry(vox[idx(x, y - 1, z)])
+                        && (1..=4).any(|d| is_masonry(vox[idx(x - d, y, z)]))
+                        && (1..=4).any(|d| is_masonry(vox[idx(x + d, y, z)]))
+                        && (1..=4).any(|d| is_masonry(vox[idx(x, y, z - d)]))
+                        && (1..=4).any(|d| is_masonry(vox[idx(x, y, z + d)]))
+                    {
+                        interior += 1;
+                    }
+                }
+            }
+        }
+        assert!(masonry > 400, "ruined city produced too little masonry: {masonry}");
+        assert!(interior > 60, "ruined buildings are not hollow: {interior} room cells");
+    }
 }
+
+

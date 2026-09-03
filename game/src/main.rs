@@ -8,11 +8,13 @@ mod block_atlas;
 mod camera;
 mod chunk;
 mod chunk_material;
+mod command;
 mod container;
 mod editor;
 mod daynight;
 mod discord;
 mod farming;
+mod firstperson;
 mod fishing;
 mod hud;
 mod interact;
@@ -97,6 +99,8 @@ fn run_game(args: &[String]) -> AppExit {
         discord::DiscordPlugin,
         editor::EditorPlugin,
         structure::StructureLibraryPlugin,
+        command::CommandPlugin,
+        firstperson::FirstPersonPlugin,
     ))
     .add_systems(Startup, setup_environment)
     .add_systems(Update, set_window_icon);
