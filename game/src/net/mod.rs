@@ -356,31 +356,79 @@ struct ServerWorld {
     players: Vec<PlayerRecord>,
 }
 
+/// Replace NaN / ±inf with a finite fallback. `serde_json` writes non-finite
+/// floats as `null`, which then fails to parse on the next boot — one physics
+/// glitch (player briefly at NaN) would otherwise corrupt the whole file and
+/// wipe every player + every block edit on reload.
+fn finite_or(v: f32, fallback: f32) -> f32 {
+    if v.is_finite() { v } else { fallback }
+}
+
+fn sanitize_record(mut r: PlayerRecord) -> PlayerRecord {
+    let fb = default_spawn();
+    for i in 0..3 {
+        r.pos[i] = finite_or(r.pos[i], fb[i]);
+    }
+    for s in &mut r.stats {
+        *s = finite_or(*s, 100.0).clamp(0.0, 100.0);
+    }
+    r
+}
+
 fn load_server_world() -> (HashMap<IVec3, Block>, HashMap<String, PlayerRecord>) {
-    let Some(w) = std::fs::read_to_string(server_world_path())
-        .ok()
-        .and_then(|t| serde_json::from_str::<ServerWorld>(&t).ok())
-    else {
-        return (HashMap::new(), HashMap::new());
+    let path = server_world_path();
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return (HashMap::new(), HashMap::new()); // first run — nothing saved yet
+    };
+    let w: ServerWorld = match serde_json::from_str(text.trim_start_matches('\u{feff}')) {
+        Ok(w) => w,
+        Err(e) => {
+            // The file exists but is unreadable. Do NOT start empty and then let
+            // the next autosave overwrite it — keep a copy so the world can be
+            // recovered by hand.
+            let backup = path.with_extension(format!(
+                "corrupt-{}.json",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0)
+            ));
+            error!("server_world.json is corrupt ({e}); backed up to {backup:?} and starting fresh");
+            let _ = std::fs::rename(&path, &backup);
+            return (HashMap::new(), HashMap::new());
+        }
     };
     let edits = w
         .edits
         .into_iter()
         .map(|([x, y, z], b)| (IVec3::new(x, y, z), b))
         .collect();
-    let players = w.players.into_iter().map(|r| (r.name.clone(), r)).collect();
+    let players = w
+        .players
+        .into_iter()
+        .map(|r| {
+            let r = sanitize_record(r);
+            (r.name.clone(), r)
+        })
+        .collect();
     (edits, players)
 }
 
 fn save_server_world(edits: &HashMap<IVec3, Block>, players: &HashMap<String, PlayerRecord>) {
     let data = ServerWorld {
         edits: edits.iter().map(|(p, b)| ([p.x, p.y, p.z], *b)).collect(),
-        players: players.values().cloned().collect(),
+        players: players.values().cloned().map(sanitize_record).collect(),
     };
-    let _ = std::fs::write(
-        server_world_path(),
-        serde_json::to_string_pretty(&data).unwrap_or_default(),
-    );
+    let Ok(json) = serde_json::to_string_pretty(&data) else {
+        return;
+    };
+    // Write to a temp file then rename, so a crash mid-write can't leave a
+    // half-written (unparseable) server_world.json behind.
+    let path = server_world_path();
+    let tmp = path.with_extension("json.tmp");
+    if std::fs::write(&tmp, &json).is_ok() {
+        let _ = std::fs::rename(&tmp, &path);
+    }
 }
 
 /// Spins up the accept loop the first frame we are a server and don't have one.
@@ -644,13 +692,13 @@ fn handle_client_msg(
             };
             server.players.insert(
                 name.clone(),
-                PlayerRecord {
+                sanitize_record(PlayerRecord {
                     name,
                     inv,
                     selected,
                     pos,
                     stats,
-                },
+                }),
             );
         }
     }

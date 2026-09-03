@@ -283,22 +283,23 @@ fn save_hotkey(
     }
 }
 
-/// Delays `AppExit` for a few frames in client mode so `net::client_save_on_request`
-/// can flush the final `SaveState` frame to the server before the process ends.
+/// Delays `AppExit` in client mode so `net::client_save_on_request` — and, more
+/// importantly, the background socket writer thread it hands the frame to — has
+/// time to push the final `SaveState` to the server before the process ends.
+/// A frame count was too short: with the pause menu open the loop is uncapped,
+/// so 8 frames could elapse in under a millisecond, before the writer thread
+/// was ever scheduled. Now it's a wall-clock deadline with a small blocking
+/// sleep per tick so that thread actually gets CPU.
 #[derive(Resource)]
-struct NetQuitDelay(u8);
+struct NetQuitDelay(std::time::Instant);
 
-fn tick_net_quit(
-    delay: Option<ResMut<NetQuitDelay>>,
-    mut exit: MessageWriter<AppExit>,
-) {
-    let Some(mut delay) = delay else {
+fn tick_net_quit(delay: Option<Res<NetQuitDelay>>, mut exit: MessageWriter<AppExit>) {
+    let Some(delay) = delay else {
         return;
     };
-    if delay.0 == 0 {
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    if delay.0.elapsed() >= std::time::Duration::from_millis(300) {
         exit.write(AppExit::Success);
-    } else {
-        delay.0 -= 1;
     }
 }
 
@@ -334,7 +335,7 @@ fn handle_save_requests(
     // the state); don't write a local world file.
     if *mode == crate::net::NetMode::Client {
         if quit {
-            commands.insert_resource(NetQuitDelay(8));
+            commands.insert_resource(NetQuitDelay(std::time::Instant::now()));
         }
         return;
     }
