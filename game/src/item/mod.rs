@@ -1,6 +1,11 @@
 //! Items, a 50-slot inventory (10-wide hotbar + 4 backpack rows), tool rules,
 //! a cursor-held stack for moving items, and a 2×2 (3×3 near a workbench)
 //! crafting grid. Backpack + crafting panel toggle with `I`.
+//!
+//! `container` (chests / furnace / mill / campfire) lives here too, re-exported
+//! flat at the crate root by `main.rs`.
+
+pub mod container;
 
 use bevy::input::mouse::MouseWheel;
 use bevy::prelude::*;
@@ -62,6 +67,31 @@ pub enum Item {
     ClayBall, // bodoque de arcilla — de picar bloques de arcilla; se cuece en ladrillo
     Brick,    // ladrillo — bodoque de arcilla cocido; 4 → bloque de Ladrillo
     Cement,   // cemento (mortero) — clic izq. sobre un bloque de Ladrillo lo vuelve Cemento
+    // Water treatment (radiation / toxicity).
+    Bucket,         // balde de madera vacío
+    BucketRadRaw,   // balde de agua irradiada sin tratar
+    BucketToxicRaw, // balde de agua tóxica sin tratar
+    BucketHot,      // balde hervido en la fogata (aún no potable)
+    BucketClean,    // balde de agua potable
+    PurifyingPill,  // carbón activado — al agua hervida la vuelve potable
+    Vodka,          // baja la intoxicación deprisa
+    AntiRad,        // medicamento — baja la radiación deprisa
+    Medkit,         // botiquín — cura salud (loot de ciudades en ruinas)
+    Spoiled,        // comida podrida — comerla intoxica
+}
+
+/// What a stack's `wear` counter models.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum WearKind {
+    None,
+    /// Tool durability — `wear` climbs each use; at `max_wear` the tool breaks.
+    Tool,
+    /// Food rot — `wear` climbs with time; at `max_wear` it turns to `Spoiled`.
+    Rot,
+    /// Metal rust — `wear` climbs slowly with time. Hook for future firearms /
+    /// metal gear; no item returns this yet.
+    #[allow(dead_code)]
+    Rust,
 }
 
 impl Item {
@@ -93,6 +123,11 @@ impl Item {
             Item::WaterBottle => (0.0, 45.0),
             Item::Potato => (10.0, 0.0),
             Item::Bread => (35.0, 0.0),
+            // Bucket drinks: all quench thirst; the raw / boiled ones also add
+            // radiation or toxicity (handled in `survival::consume`).
+            Item::BucketClean => (0.0, 60.0),
+            Item::BucketHot => (0.0, 45.0),
+            Item::BucketRadRaw | Item::BucketToxicRaw => (0.0, 38.0),
             _ => return None,
         })
     }
@@ -148,6 +183,16 @@ impl Item {
             Item::ClayBall => "Clay Ball".into(),
             Item::Brick => "Brick".into(),
             Item::Cement => "Cement".into(),
+            Item::Bucket => "Wooden Bucket".into(),
+            Item::BucketRadRaw => "Bucket of Irradiated Water".into(),
+            Item::BucketToxicRaw => "Bucket of Toxic Water".into(),
+            Item::BucketHot => "Bucket of Boiled Water".into(),
+            Item::BucketClean => "Bucket of Clean Water".into(),
+            Item::PurifyingPill => "Purifying Pill".into(),
+            Item::Vodka => "Vodka".into(),
+            Item::AntiRad => "Anti-Rad Meds".into(),
+            Item::Medkit => "Medkit".into(),
+            Item::Spoiled => "Rotten Food".into(),
         }
     }
 
@@ -155,6 +200,12 @@ impl Item {
         match self {
             Item::Knife | Item::Axe | Item::Pick | Item::Shovel | Item::FishingRod
             | Item::Sickle => 1,
+            // A filled bucket is a single unit.
+            Item::BucketRadRaw
+            | Item::BucketToxicRaw
+            | Item::BucketHot
+            | Item::BucketClean => 1,
+            Item::Bucket => 4,
             _ => STACK_MAX,
         }
     }
@@ -168,6 +219,57 @@ impl Item {
             Item::Sickle => Some(ToolKind::Sickle),
             _ => None,
         }
+    }
+
+    /// Whether this food was cooked (rots much slower than raw).
+    pub fn is_cooked_food(self) -> bool {
+        matches!(
+            self,
+            Item::CookedMeat
+                | Item::CookedRedMeat
+                | Item::CookedMutton
+                | Item::CookedWhiteMeat
+                | Item::CookedFish
+                | Item::Bread
+        )
+    }
+
+    /// Which deterioration model a stack of this item follows.
+    pub fn wear_kind(self) -> WearKind {
+        match self {
+            Item::Knife | Item::Axe | Item::Pick | Item::Shovel | Item::Sickle
+            | Item::FishingRod => WearKind::Tool,
+            Item::Meat | Item::RedMeat | Item::Mutton | Item::WhiteMeat | Item::Fish
+            | Item::Potato => WearKind::Rot,
+            _ if self.is_cooked_food() => WearKind::Rot,
+            _ => WearKind::None,
+        }
+    }
+
+    /// `wear` value at which the item is spent (tool breaks / food spoils), or
+    /// `None` if it never wears.
+    pub fn max_wear(self) -> Option<u16> {
+        Some(match self.wear_kind() {
+            WearKind::Tool => match self {
+                Item::Pick => 250,
+                Item::Axe => 200,
+                Item::Shovel => 220,
+                Item::Knife => 150,
+                Item::Sickle => 140,
+                Item::FishingRod => 80,
+                _ => 180,
+            },
+            // "puntos de podredumbre" ≈ segundos de vida útil.
+            WearKind::Rot => {
+                if self.is_cooked_food() {
+                    1000
+                } else {
+                    360
+                }
+            }
+            WearKind::Rust => 600,
+            WearKind::None => return None,
+        })
     }
 
     pub fn as_block(self) -> Option<Block> {
@@ -220,6 +322,16 @@ impl Item {
             Item::ClayBall => Color::srgb(0.58, 0.60, 0.66),
             Item::Brick => Color::srgb(0.70, 0.34, 0.26),
             Item::Cement => Color::srgb(0.66, 0.66, 0.64),
+            Item::Bucket => Color::srgb(0.46, 0.34, 0.20),
+            Item::BucketRadRaw => Color::srgb(0.30, 0.62, 0.46),
+            Item::BucketToxicRaw => Color::srgb(0.42, 0.60, 0.18),
+            Item::BucketHot => Color::srgb(0.55, 0.68, 0.80),
+            Item::BucketClean => Color::srgb(0.40, 0.72, 0.95),
+            Item::PurifyingPill => Color::srgb(0.90, 0.90, 0.86),
+            Item::Vodka => Color::srgb(0.85, 0.88, 0.92),
+            Item::AntiRad => Color::srgb(0.85, 0.70, 0.25),
+            Item::Medkit => Color::srgb(0.88, 0.20, 0.20),
+            Item::Spoiled => Color::srgb(0.34, 0.40, 0.20),
         }
     }
 
@@ -620,6 +732,49 @@ pub const RECIPES: &[Recipe] = &[
         },
         station: Station::Workbench,
     },
+    // --- Water treatment / medicine ---
+    Recipe {
+        // Wooden bucket: an L of three planks.
+        out: (Item::Bucket, 1),
+        kind: RecipeKind::Shaped {
+            rows: &["##", "# "],
+            key: &[('#', Item::Block(Block::WoodPlanks))],
+        },
+        station: Station::Hand,
+    },
+    Recipe {
+        // Campfire: two logs over a couple of stones.
+        out: (Item::Block(Block::Campfire), 1),
+        kind: RecipeKind::Shaped {
+            rows: &["ss", "##"],
+            key: &[('s', Item::Stick), ('#', Item::Block(Block::Stone))],
+        },
+        station: Station::Hand,
+    },
+    Recipe {
+        // Charcoal pressed into activated-carbon pills.
+        out: (Item::PurifyingPill, 2),
+        kind: RecipeKind::Shapeless {
+            items: &[Item::Charcoal, Item::Charcoal],
+        },
+        station: Station::Workbench,
+    },
+    Recipe {
+        // Homebrew: fermented potatoes.
+        out: (Item::Vodka, 1),
+        kind: RecipeKind::Shapeless {
+            items: &[Item::Potato, Item::Potato, Item::Potato],
+        },
+        station: Station::Workbench,
+    },
+    Recipe {
+        // Drop a purifying pill into the boiled bucket → drinkable water.
+        out: (Item::BucketClean, 1),
+        kind: RecipeKind::Shapeless {
+            items: &[Item::BucketHot, Item::PurifyingPill],
+        },
+        station: Station::Hand,
+    },
 ];
 
 /// The grid as a `dim×dim` array of items (counts ignored).
@@ -714,6 +869,25 @@ fn matching_recipe(craft: &[Option<Stack>], dim: usize, near_workbench: bool) ->
 pub struct Stack {
     pub item: Item,
     pub count: u32,
+    /// Generic deterioration counter, meaning set by `Item::wear_kind`:
+    /// tool durability spent, food rot, or (later) rust. `0` = pristine / fresh.
+    /// The item is used up / spoiled at `Item::max_wear`.
+    #[serde(default)]
+    pub wear: u16,
+}
+
+impl Stack {
+    pub fn new(item: Item, count: u32) -> Self {
+        Stack { item, count, wear: 0 }
+    }
+
+    /// 0..1, how worn this stack is (0 = pristine). `1.0` if it has no wear model.
+    pub fn wear_frac(&self) -> f32 {
+        match self.item.max_wear() {
+            Some(m) if m > 0 => (self.wear as f32 / m as f32).clamp(0.0, 1.0),
+            _ => 0.0,
+        }
+    }
 }
 
 #[derive(Resource)]
@@ -750,7 +924,8 @@ impl Inventory {
             .sum()
     }
 
-    /// Adds items, topping up existing stacks then filling empty slots.
+    /// Adds *fresh* items, topping up existing pristine stacks then filling empty
+    /// slots. Won't merge onto a worn/rotting stack (keeps its `wear` honest).
     pub fn add(&mut self, item: Item, mut n: u32) {
         let max = item.max_stack();
         for slot in self.slots.iter_mut() {
@@ -758,7 +933,7 @@ impl Inventory {
                 return;
             }
             if let Some(st) = slot {
-                if st.item == item && st.count < max {
+                if st.item == item && st.count < max && st.wear == 0 {
                     let take = (max - st.count).min(n);
                     st.count += take;
                     n -= take;
@@ -771,10 +946,27 @@ impl Inventory {
             }
             if slot.is_none() {
                 let take = n.min(max);
-                *slot = Some(Stack { item, count: take });
+                *slot = Some(Stack::new(item, take));
                 n -= take;
             }
         }
+    }
+
+    /// Adds `amount` of wear to the selected slot's item; empties the slot if it
+    /// breaks. Returns `true` if it just broke.
+    pub fn wear_selected(&mut self, amount: u16) -> bool {
+        let Some(st) = &mut self.slots[self.selected] else {
+            return false;
+        };
+        let Some(max) = st.item.max_wear() else {
+            return false;
+        };
+        st.wear = st.wear.saturating_add(amount);
+        if st.wear >= max {
+            self.slots[self.selected] = None;
+            return true;
+        }
+        false
     }
 
     pub fn take(&mut self, item: Item, mut n: u32) -> u32 {
@@ -798,16 +990,31 @@ impl Inventory {
         removed
     }
 
+    /// Puts a whole stack back, keeping its `wear` (worn/rotting stays worn).
+    pub fn add_stack(&mut self, s: Stack) {
+        if s.wear == 0 {
+            self.add(s.item, s.count);
+            return;
+        }
+        if let Some(slot) = self.slots.iter_mut().find(|x| x.is_none()) {
+            *slot = Some(s);
+        } else if let Some(st) = self.slots.iter_mut().flatten().find(|st| st.item == s.item) {
+            st.wear = blend_wear(st.wear, st.count, s.wear, s.count);
+            st.count += s.count;
+        }
+        // else: inventory full — overflow is dropped, same as `add`.
+    }
+
     pub fn return_carried(&mut self) {
         if let Some(c) = self.carried.take() {
-            self.add(c.item, c.count);
+            self.add_stack(c);
         }
     }
 
     fn return_grid_from(&mut self, from: usize) {
         for i in from..CRAFT_SLOTS {
             if let Some(s) = self.craft[i].take() {
-                self.add(s.item, s.count);
+                self.add_stack(s);
             }
         }
     }
@@ -840,10 +1047,20 @@ impl Inventory {
         let (item, amount) = recipe.out;
         match &mut self.carried {
             Some(c) if c.item == item => c.count += amount,
-            None => self.carried = Some(Stack { item, count: amount }),
+            None => self.carried = Some(Stack::new(item, amount)),
             Some(_) => {}
         }
     }
+}
+
+/// Weighted-average two `wear` values so merging stacks keeps rot / durability
+/// honest (the merged food ages at the blend of both).
+fn blend_wear(a: u16, an: u32, b: u16, bn: u32) -> u16 {
+    let total = an + bn;
+    if total == 0 {
+        return a;
+    }
+    ((a as u32 * an + b as u32 * bn) / total) as u16
 }
 
 /// One click's worth of item juggling between a slot and the cursor stack.
@@ -856,6 +1073,9 @@ pub fn stack_click(target: &mut Option<Stack>, carried: &mut Option<Stack>, left
             (Some(mut c), Some(mut t)) if c.item == t.item => {
                 let room = c.item.max_stack().saturating_sub(t.count);
                 let moved = room.min(c.count);
+                if moved > 0 {
+                    t.wear = blend_wear(t.wear, t.count, c.wear, moved);
+                }
                 t.count += moved;
                 c.count -= moved;
                 *target = Some(t);
@@ -869,14 +1089,12 @@ pub fn stack_click(target: &mut Option<Stack>, carried: &mut Option<Stack>, left
     } else {
         match (*carried, target.take()) {
             (Some(mut c), None) => {
-                *target = Some(Stack {
-                    item: c.item,
-                    count: 1,
-                });
+                *target = Some(Stack { item: c.item, count: 1, wear: c.wear });
                 c.count -= 1;
                 *carried = (c.count > 0).then_some(c);
             }
             (Some(mut c), Some(mut t)) if t.item == c.item && t.count < c.item.max_stack() => {
+                t.wear = blend_wear(t.wear, t.count, c.wear, 1);
                 t.count += 1;
                 c.count -= 1;
                 *target = Some(t);
@@ -885,15 +1103,10 @@ pub fn stack_click(target: &mut Option<Stack>, carried: &mut Option<Stack>, left
             (Some(_), Some(t)) => *target = Some(t),
             (None, Some(t)) => {
                 let half = t.count.div_ceil(2);
-                *carried = Some(Stack {
-                    item: t.item,
-                    count: half,
-                });
+                *carried = Some(Stack { item: t.item, count: half, wear: t.wear });
                 let rem = t.count - half;
-                *target = (rem > 0).then_some(Stack {
-                    item: t.item,
-                    count: rem,
-                });
+                *target =
+                    (rem > 0).then_some(Stack { item: t.item, count: rem, wear: t.wear });
             }
             (None, None) => {}
         }
@@ -949,6 +1162,7 @@ impl Plugin for InventoryPlugin {
                     toggle_inventory,
                     update_crafting,
                     inventory_click,
+                    tick_spoilage,
                 )
                     .chain()
                     .run_if(not_paused),
@@ -967,6 +1181,51 @@ impl Plugin for InventoryPlugin {
                     clear_at_workbench,
                 ),
             );
+    }
+}
+
+/// Ages perishable stacks in the player's inventory once a second: `Rot` items
+/// climb toward `max_wear` and turn into `Spoiled`; `Rust` items climb slowly
+/// (hook for future metal gear). Chests / furnaces don't preserve — food kept
+/// in them still rots.
+fn tick_spoilage(time: Res<Time>, mut inv: ResMut<Inventory>, mut acc: Local<f32>) {
+    *acc += time.delta_secs();
+    if *acc < 1.0 {
+        return;
+    }
+    let steps = *acc as u16;
+    *acc -= steps as f32;
+
+    // Destructure so the three field borrows are provably disjoint.
+    let Inventory {
+        slots,
+        craft,
+        carried,
+        ..
+    } = &mut *inv;
+    for slot in slots
+        .iter_mut()
+        .chain(craft.iter_mut())
+        .chain(std::iter::once(carried))
+    {
+        let Some(st) = slot else {
+            continue;
+        };
+        let Some(max) = st.item.max_wear() else {
+            continue;
+        };
+        match st.item.wear_kind() {
+            WearKind::Rot => {
+                st.wear = st.wear.saturating_add(steps);
+                if st.wear >= max {
+                    *slot = Some(Stack::new(Item::Spoiled, st.count));
+                }
+            }
+            WearKind::Rust => {
+                st.wear = st.wear.saturating_add(steps).min(max);
+            }
+            _ => {}
+        }
     }
 }
 
@@ -1268,6 +1527,44 @@ struct CraftGrid;
 #[derive(Component)]
 struct CraftHint;
 
+/// One of the six body parts in the inventory's Fallout-style paper doll.
+/// Index order: 0 head · 1 torso · 2 left arm · 3 right arm · 4 left leg · 5 right
+/// leg. `survival::update_paper_doll` tints these from `Stats::limbs`.
+#[derive(Component)]
+pub struct LimbNode(pub usize);
+#[derive(Component)]
+pub struct LimbText(pub usize);
+
+fn limb(
+    doll: &mut ChildSpawnerCommands,
+    i: usize,
+    label: &str,
+    (l, t, w, h): (f32, f32, f32, f32),
+) {
+    doll.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(l),
+            top: Val::Px(t),
+            width: Val::Px(w),
+            height: Val::Px(h),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            ..default()
+        },
+        BackgroundColor(Color::srgb(0.2, 0.7, 0.25)),
+        LimbNode(i),
+    ))
+    .with_children(|c| {
+        c.spawn((
+            Text::new(label.to_string()),
+            TextFont::from_font_size(10.0),
+            TextColor(Color::srgb(0.05, 0.05, 0.05)),
+            LimbText(i),
+        ));
+    });
+}
+
 pub fn cell(commands: &mut ChildSpawnerCommands, kind: SlotKind) {
     commands
         .spawn((
@@ -1358,6 +1655,23 @@ fn spawn_inventory_panel(mut commands: Commands) {
                             TextColor(Color::WHITE),
                         ));
                         cell(row, SlotKind::Result);
+
+                        // Fallout-style paper doll: 6 coloured boxes laid out
+                        // like a body, tinted by limb health (`survival.rs`).
+                        row.spawn(Node {
+                            width: Val::Px(170.0),
+                            height: Val::Px(192.0),
+                            margin: UiRect::left(Val::Px(24.0)),
+                            ..default()
+                        })
+                        .with_children(|doll| {
+                            limb(doll, 0, "HEAD", (65.0, 0.0, 40.0, 34.0));
+                            limb(doll, 2, "L", (8.0, 42.0, 34.0, 66.0));
+                            limb(doll, 1, "TORSO", (50.0, 38.0, 70.0, 74.0));
+                            limb(doll, 3, "R", (128.0, 42.0, 34.0, 66.0));
+                            limb(doll, 4, "L", (54.0, 116.0, 28.0, 74.0));
+                            limb(doll, 5, "R", (88.0, 116.0, 28.0, 74.0));
+                        });
                     });
 
                 // Backpack grid.
@@ -1383,9 +1697,7 @@ fn slot_stack(inventory: &Inventory, craft_state: &CraftState, kind: SlotKind) -
     match kind {
         SlotKind::Backpack(i) => inventory.slots.get(i).copied().flatten(),
         SlotKind::Craft(i) => inventory.craft.get(i).copied().flatten(),
-        SlotKind::Result => craft_state
-            .result
-            .map(|(item, count)| Stack { item, count }),
+        SlotKind::Result => craft_state.result.map(|(item, count)| Stack::new(item, count)),
         SlotKind::Container(_) => None, // painted by `container.rs`
     }
 }
@@ -1615,6 +1927,26 @@ fn inventory_tooltip(
     match stack {
         Some(stack) => {
             text.0 = stack.item.name();
+            match stack.item.wear_kind() {
+                WearKind::Tool => {
+                    text.0
+                        .push_str(&format!("  ({:.0}% dur.)", (1.0 - stack.wear_frac()) * 100.0));
+                }
+                WearKind::Rot => {
+                    let f = 1.0 - stack.wear_frac();
+                    let extra = if f > 0.25 {
+                        format!("  ({:.0}% fresh)", f * 100.0)
+                    } else {
+                        "  (going off!)".to_string()
+                    };
+                    text.0.push_str(&extra);
+                }
+                WearKind::Rust if stack.wear > 0 => {
+                    text.0
+                        .push_str(&format!("  ({:.0}% rusted)", stack.wear_frac() * 100.0));
+                }
+                _ => {}
+            }
             if let Ok(window) = windows.single() {
                 if let Some(cursor) = window.cursor_position() {
                     node.left = Val::Px(cursor.x + 14.0);

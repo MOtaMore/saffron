@@ -181,7 +181,7 @@ fn should_render(here: Block, neighbor: Block) -> bool {
         false
     } else if here.is_opaque() {
         !neighbor.is_opaque()
-    } else if here == Block::Water {
+    } else if here.is_waterlike() {
         // Water: only show the surface / edges against open air.
         neighbor == Block::Air
     } else {
@@ -230,7 +230,7 @@ pub fn build_mesh(center: &ChunkData, neighbors: &Neighbors, max_y: i32) -> Mesh
                 }
                 let base = here.color();
                 let alpha = here.alpha();
-                let is_water = here == Block::Water;
+                let is_water = here.is_waterlike();
                 let is_glass = here == Block::Glass;
                 let textured = here.is_textured();
                 for face in &FACES {

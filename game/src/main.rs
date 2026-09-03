@@ -2,39 +2,26 @@
 //!
 //! Hito 1: mundo procedural por chunks + exploracion.
 
-mod animal;
-mod block;
-mod block_atlas;
-mod camera;
-mod chunk;
-mod chunk_material;
-mod command;
-mod container;
-mod editor;
-mod daynight;
-mod discord;
-mod farming;
-mod firstperson;
-mod fishing;
-mod hud;
-mod interact;
-mod item;
-mod keybinds;
-mod menu;
-mod mesher;
-mod net;
-mod pause;
-mod player;
-mod props;
+// Source is grouped by domain into subdirectories. Each group's submodules are
+// re-exported flat below, so the rest of the code keeps using `crate::block::…`,
+// `crate::worldgen::…`, `crate::camera::…` etc. unchanged.
+mod item; // item, container
+mod net; // net, command, discord
+mod player; // player, camera, firstperson, interact, keybinds, skins, station
 mod save;
-mod scatter;
-mod skins;
-mod station;
-mod streaming;
-mod structure;
-mod survival;
-mod view;
-mod worldgen;
+mod survival; // survival, farming, fishing, radiation
+mod ui; // hud, menu, pause, editor
+mod world; // block, chunk, worldgen, mesher, streaming, structure, scatter, props, view, daynight, animal, chunk_material, block_atlas
+
+pub(crate) use item::container;
+pub(crate) use net::{command, discord};
+pub(crate) use player::{camera, firstperson, interact, keybinds, skins, station};
+pub(crate) use survival::{farming, fishing, radiation};
+pub(crate) use ui::{editor, hud, menu, pause};
+pub(crate) use world::{
+    animal, block, block_atlas, chunk, chunk_material, daynight, mesher, props, scatter, streaming,
+    structure, view, worldgen,
+};
 
 use std::time::Duration;
 
@@ -101,6 +88,7 @@ fn run_game(args: &[String]) -> AppExit {
         structure::StructureLibraryPlugin,
         command::CommandPlugin,
         firstperson::FirstPersonPlugin,
+        radiation::RadiationPlugin,
     ))
     .add_systems(Startup, setup_environment)
     .add_systems(Update, set_window_icon);

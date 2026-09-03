@@ -79,7 +79,7 @@ fn in_reach(player: &Transform, cell: IVec3) -> bool {
 /// The flint sickle only tills — left-click a Dirt/Grass block with it selected.
 fn till_soil(
     mouse: Res<ButtonInput<MouseButton>>,
-    inventory: Res<Inventory>,
+    mut inventory: ResMut<Inventory>,
     windows: Query<&Window>,
     camera_q: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
     player_q: Query<&Transform, With<Player>>,
@@ -102,6 +102,7 @@ fn till_soil(
         Some(Block::Dirt) | Some(Block::Grass)
     ) {
         world.set_block(hit.cell.x, hit.cell.y, hit.cell.z, Block::Farmland);
+        inventory.wear_selected(1);
     }
 }
 

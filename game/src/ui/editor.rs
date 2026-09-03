@@ -71,6 +71,9 @@ const PALETTE: &[Block] = &[
     Block::StoneBrick,
     Block::Bricks,
     Block::Cement,
+    Block::Campfire,
+    Block::RadWater,
+    Block::ToxicWater,
 ];
 
 pub struct EditorPlugin;

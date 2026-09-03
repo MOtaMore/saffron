@@ -40,6 +40,14 @@ pub enum Block {
     Bricks,
     /// 2 `Clay` + 2 `Gravel` on a workbench → 4.
     Cement,
+    /// Radioactive water — some rivers and ruined-city puddles. Drinking it raw
+    /// spikes `Stats::radiation`.
+    RadWater,
+    /// Toxic water — stagnant inland pools. Drinking it raw spikes
+    /// `Stats::toxicity`.
+    ToxicWater,
+    /// Campfire — a station that boils a bucket of contaminated water.
+    Campfire,
 }
 
 /// Tile columns in the block texture atlas (see `block_atlas.rs`).
@@ -114,7 +122,15 @@ impl Block {
                 | Block::Torch
                 | Block::WheatCrop
                 | Block::HandMill
+                | Block::Campfire
         )
+    }
+
+    /// Water and its contaminated variants — meshed into the blended pass,
+    /// passable, and treated as a drink source by `survival`.
+    #[inline]
+    pub fn is_waterlike(self) -> bool {
+        matches!(self, Block::Water | Block::RadWater | Block::ToxicWater)
     }
 
     /// Atlas tile for a face, given that face's Y-normal component.
@@ -167,12 +183,15 @@ impl Block {
             self,
             Block::Air
                 | Block::Water
+                | Block::RadWater
+                | Block::ToxicWater
                 | Block::Glass
                 | Block::Workbench
                 | Block::Chest
                 | Block::Furnace
                 | Block::Torch
                 | Block::WheatCrop
+                | Block::Campfire
         )
     }
 
@@ -182,7 +201,13 @@ impl Block {
     pub fn is_collidable(self) -> bool {
         !matches!(
             self,
-            Block::Air | Block::Water | Block::Torch | Block::WheatCrop
+            Block::Air
+                | Block::Water
+                | Block::RadWater
+                | Block::ToxicWater
+                | Block::Torch
+                | Block::WheatCrop
+                | Block::Campfire
         )
     }
 
@@ -216,6 +241,9 @@ impl Block {
             Block::StoneBrick => [0.46, 0.47, 0.49],
             Block::Bricks => [0.62, 0.30, 0.24],
             Block::Cement => [0.66, 0.66, 0.64],
+            Block::RadWater => [0.22, 0.55, 0.40],
+            Block::ToxicWater => [0.34, 0.52, 0.16],
+            Block::Campfire => [0.95, 0.55, 0.20],
         }
     }
 
@@ -225,6 +253,8 @@ impl Block {
     pub fn alpha(self) -> f32 {
         match self {
             Block::Water => 0.5,
+            Block::RadWater => 0.55,
+            Block::ToxicWater => 0.6,
             Block::Glass => 0.32,
             _ => 1.0,
         }
@@ -233,7 +263,10 @@ impl Block {
     /// Can the player mine this block?
     #[inline]
     pub fn is_breakable(self) -> bool {
-        !matches!(self, Block::Air | Block::Water | Block::Bedrock)
+        !matches!(
+            self,
+            Block::Air | Block::Water | Block::RadWater | Block::ToxicWater | Block::Bedrock
+        )
     }
 
     /// The item obtained when this block is broken (usually itself).
@@ -251,6 +284,7 @@ impl Block {
             Block::StoneBrick => Some(Block::StoneBrick),
             Block::Bricks => Some(Block::Bricks),
             Block::Cement => Some(Block::Cement),
+            Block::Campfire => Some(Block::Campfire),
             Block::Sand => Some(Block::Sand),
             Block::Snow => Some(Block::Snow),
             Block::Wood => Some(Block::Wood),
@@ -265,7 +299,13 @@ impl Block {
             Block::Gravel => Some(Block::Gravel), // may yield flint instead (see interact)
             // Leaves crumble away without dropping anything; a wheat crop's
             // drop depends on how grown it is (see `farming::harvest_crops`).
-            Block::Leaves | Block::Air | Block::Water | Block::Bedrock | Block::WheatCrop => None,
+            Block::Leaves
+            | Block::Air
+            | Block::Water
+            | Block::RadWater
+            | Block::ToxicWater
+            | Block::Bedrock
+            | Block::WheatCrop => None,
         }
     }
 
@@ -298,6 +338,9 @@ impl Block {
             Block::StoneBrick => "Stone Bricks",
             Block::Bricks => "Bricks",
             Block::Cement => "Cement",
+            Block::RadWater => "Irradiated Water",
+            Block::ToxicWater => "Toxic Water",
+            Block::Campfire => "Campfire",
         }
     }
 }

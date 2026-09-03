@@ -3,7 +3,7 @@
 //! Shift + hold left-click breaks it and returns its contents. The hand mill
 //! has an input slot, a "hold to grind" button and an output slot.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use bevy::prelude::*;
 
@@ -37,6 +37,7 @@ impl Plugin for ContainerPlugin {
         app.init_resource::<ChestStores>()
             .init_resource::<FurnaceStores>()
             .init_resource::<MillStores>()
+            .init_resource::<CampfireStores>()
             .init_resource::<OpenContainer>()
             .add_systems(Startup, spawn_container_panel)
             .add_systems(
@@ -46,8 +47,11 @@ impl Plugin for ContainerPlugin {
                     close_when_far,
                     container_click,
                     furnace_tick,
+                    campfire_tick,
                     mill_grind,
                     mill_cleanup,
+                    campfire_cleanup,
+                    seed_ruin_chests,
                 )
                     .chain()
                     .run_if(not_paused),
@@ -83,11 +87,16 @@ pub struct Mill {
 #[derive(Resource, Default)]
 pub struct MillStores(pub HashMap<IVec3, Mill>);
 
+/// The campfire reuses the furnace's slot layout (input / fuel / output).
+#[derive(Resource, Default)]
+pub struct CampfireStores(pub HashMap<IVec3, Furnace>);
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ContainerKind {
     Chest,
     Furnace,
     Mill,
+    Campfire,
 }
 
 pub struct Open {
@@ -105,7 +114,7 @@ impl OpenContainer {
         match &self.0 {
             None => 0,
             Some(o) => match o.kind {
-                ContainerKind::Furnace => 3,
+                ContainerKind::Furnace | ContainerKind::Campfire => 3,
                 ContainerKind::Mill => 2,
                 ContainerKind::Chest => {
                     if o.b.is_some() {
@@ -148,6 +157,17 @@ fn fuel_time(item: Item) -> Option<f32> {
     }
 }
 
+const BOIL_TIME: f32 = 6.0;
+
+/// The campfire boils a raw contaminated bucket into a `BucketHot` (still not
+/// safe — it needs a purifying pill next, see `item::RECIPES`).
+fn boil_output(item: Item) -> Option<Item> {
+    match item {
+        Item::BucketRadRaw | Item::BucketToxicRaw => Some(Item::BucketHot),
+        _ => None,
+    }
+}
+
 /// Called by `interact::mining` when a chest/furnace is broken.
 pub fn on_broken(
     pos: IVec3,
@@ -157,12 +177,12 @@ pub fn on_broken(
 ) {
     if let Some(store) = chests.0.remove(&pos) {
         for stack in store.into_iter().flatten() {
-            inventory.add(stack.item, stack.count);
+            inventory.add_stack(stack);
         }
     }
     if let Some(f) = furnaces.0.remove(&pos) {
         for stack in [f.input, f.fuel, f.output].into_iter().flatten() {
-            inventory.add(stack.item, stack.count);
+            inventory.add_stack(stack);
         }
     }
 }
@@ -172,10 +192,20 @@ fn read_slot(
     chests: &ChestStores,
     furnaces: &FurnaceStores,
     mills: &MillStores,
+    campfires: &CampfireStores,
     i: usize,
 ) -> Option<Stack> {
     let o = open.0.as_ref()?;
     match o.kind {
+        ContainerKind::Campfire => {
+            let f = campfires.0.get(&o.a)?;
+            match i {
+                0 => f.input,
+                1 => f.fuel,
+                2 => f.output,
+                _ => None,
+            }
+        }
         ContainerKind::Mill => {
             let m = mills.0.get(&o.a)?;
             match i {
@@ -240,6 +270,11 @@ pub fn open_at(world: &ChunkWorld, pos: IVec3) -> Option<Open> {
         }),
         Some(Block::HandMill) => Some(Open {
             kind: ContainerKind::Mill,
+            a: pos,
+            b: None,
+        }),
+        Some(Block::Campfire) => Some(Open {
+            kind: ContainerKind::Campfire,
             a: pos,
             b: None,
         }),
@@ -328,6 +363,7 @@ fn container_click(
     mut chests: ResMut<ChestStores>,
     mut furnaces: ResMut<FurnaceStores>,
     mut mills: ResMut<MillStores>,
+    mut campfires: ResMut<CampfireStores>,
     slots: Query<(&SlotKind, &Interaction)>,
 ) {
     let Some(o) = &open.0 else {
@@ -378,6 +414,19 @@ fn container_click(
                 1 => {
                     if left && inventory.carried.is_none() {
                         inventory.carried = m.output.take();
+                    }
+                }
+                _ => {}
+            }
+        }
+        ContainerKind::Campfire => {
+            let f = campfires.0.entry(o.a).or_default();
+            match idx {
+                0 => stack_click(&mut f.input, &mut inventory.carried, left),
+                1 => stack_click(&mut f.fuel, &mut inventory.carried, left),
+                2 => {
+                    if left && inventory.carried.is_none() {
+                        inventory.carried = f.output.take();
                     }
                 }
                 _ => {}
@@ -434,11 +483,85 @@ fn furnace_tick(time: Res<Time>, mut furnaces: ResMut<FurnaceStores>) {
             match f.output.as_mut() {
                 Some(o) => o.count += 1,
                 None => {
-                    f.output = Some(Stack {
-                        item: result,
-                        count: 1,
-                    })
+                    f.output = Some(Stack::new(result, 1))
                 }
+            }
+        }
+    }
+}
+
+/// Same loop as `furnace_tick`, boiling contaminated buckets instead of smelting.
+fn campfire_tick(time: Res<Time>, mut campfires: ResMut<CampfireStores>) {
+    let dt = time.delta_secs();
+    for f in campfires.0.values_mut() {
+        let Some(input) = f.input else {
+            f.progress = 0.0;
+            continue;
+        };
+        let Some(result) = boil_output(input.item) else {
+            f.progress = 0.0;
+            continue;
+        };
+        let output_ok = match f.output {
+            None => true,
+            Some(o) => o.item == result && o.count < o.item.max_stack(),
+        };
+        if !output_ok {
+            continue;
+        }
+        if f.burn <= 0.0 {
+            if let Some(fuel) = f.fuel.as_mut() {
+                if let Some(bt) = fuel_time(fuel.item) {
+                    fuel.count -= 1;
+                    f.burn += bt;
+                    if fuel.count == 0 {
+                        f.fuel = None;
+                    }
+                }
+            }
+        }
+        if f.burn <= 0.0 {
+            f.progress = (f.progress - dt).max(0.0);
+            continue;
+        }
+        f.burn -= dt;
+        f.progress += dt;
+        if f.progress >= BOIL_TIME {
+            f.progress = 0.0;
+            if let Some(i) = f.input.as_mut() {
+                i.count -= 1;
+                if i.count == 0 {
+                    f.input = None;
+                }
+            }
+            match f.output.as_mut() {
+                Some(o) => o.count += 1,
+                None => f.output = Some(Stack::new(result, 1)),
+            }
+        }
+    }
+}
+
+/// A broken campfire (no longer in the world) dumps its contents.
+fn campfire_cleanup(
+    world: Res<ChunkWorld>,
+    mut campfires: ResMut<CampfireStores>,
+    mut inventory: ResMut<Inventory>,
+) {
+    let gone: Vec<IVec3> = campfires
+        .0
+        .keys()
+        .copied()
+        .filter(|p| {
+            world
+                .get_loaded(p.x, p.y, p.z)
+                .is_some_and(|b| b != Block::Campfire)
+        })
+        .collect();
+    for pos in gone {
+        if let Some(f) = campfires.0.remove(&pos) {
+            for stack in [f.input, f.fuel, f.output].into_iter().flatten() {
+                inventory.add_stack(stack);
             }
         }
     }
@@ -448,6 +571,66 @@ fn grind_output(item: Item) -> Option<Item> {
     match item {
         Item::Wheat => Some(Item::Flour),
         _ => None,
+    }
+}
+
+// --- Ruined-city chest loot -----------------------------------------
+
+fn loot_hash(p: IVec3) -> u64 {
+    let mut z = (p.x as i64 as u64)
+        .wrapping_mul(0xA076_1D64_78BD_642F)
+        ^ (p.y as i64 as u64).wrapping_mul(0xE703_7ED1_A0B4_28DB)
+        ^ (p.z as i64 as u64).wrapping_mul(0x8EBC_6AF0_9C88_C6E3);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+/// Deterministic contents for a ruined-city chest at `pos` (empty for a plain
+/// worldgen chest). Kept modest — this is early loot.
+fn ruin_loot(pos: IVec3) -> Vec<Option<Stack>> {
+    let h = loot_hash(pos);
+    let mut items: Vec<Stack> = Vec::new();
+    let amount = |x: u64, hi: u32| 1 + (x % hi as u64) as u32;
+    match h % 100 {
+        0..=25 => items.push(Stack::new(Item::PurifyingPill, amount(h >> 8, 3))),
+        26..=48 => items.push(Stack::new(Item::Medkit, amount(h >> 10, 2))),
+        49..=63 => items.push(Stack::new(Item::Vodka, 1)),
+        64..=78 => items.push(Stack::new(Item::AntiRad, amount(h >> 12, 2))),
+        79..=90 => items.push(Stack::new(Item::Charcoal, 2 + amount(h >> 16, 4))),
+        _ => {} // 91..99 → nothing
+    }
+    if h & 0x1_0000_0000 != 0 && !items.is_empty() {
+        items.push(Stack::new(Item::Bucket, 1));
+    }
+    if items.is_empty() {
+        return Vec::new();
+    }
+    let mut store = vec![None; CHEST_SLOTS];
+    for (i, s) in items.into_iter().enumerate() {
+        store[i] = Some(s);
+    }
+    store
+}
+
+/// Fills freshly-discovered ruined-city chests with loot once. A chest the
+/// player placed is in `world.edits`; a worldgen one is not.
+fn seed_ruin_chests(
+    world: Res<ChunkWorld>,
+    mut chests: ResMut<ChestStores>,
+    mut seeded: Local<HashSet<IVec3>>,
+) {
+    for (&pos, &kind) in world.prop_blocks.iter() {
+        if kind != Block::Chest || !seeded.insert(pos) {
+            continue;
+        }
+        if world.edits.contains_key(&pos) || chests.0.contains_key(&pos) {
+            continue; // player-placed, or already interacted with
+        }
+        let loot = ruin_loot(pos);
+        if !loot.is_empty() {
+            chests.0.insert(pos, loot);
+        }
     }
 }
 
@@ -506,10 +689,7 @@ fn mill_grind(
         match m.output.as_mut() {
             Some(out) => out.count += 1,
             None => {
-                m.output = Some(Stack {
-                    item: result,
-                    count: 1,
-                })
+                m.output = Some(Stack::new(result, 1))
             }
         }
     }
@@ -535,7 +715,7 @@ fn mill_cleanup(
     for pos in gone {
         if let Some(m) = mills.0.remove(&pos) {
             for stack in [m.input, m.output].into_iter().flatten() {
-                inventory.add(stack.item, stack.count);
+                inventory.add_stack(stack);
             }
         }
     }
@@ -652,6 +832,7 @@ fn paint_container_slots(
     chests: Res<ChestStores>,
     furnaces: Res<FurnaceStores>,
     mills: Res<MillStores>,
+    campfires: Res<CampfireStores>,
     server: Res<AssetServer>,
     mut cells: Query<(&SlotKind, &mut BackgroundColor, &mut Node, &mut ImageNode)>,
     mut counts: Query<(&SlotCount, &mut Text)>,
@@ -663,7 +844,7 @@ fn paint_container_slots(
         };
         node.display = if i < n { Display::Flex } else { Display::None };
         paint_icon(
-            read_slot(&open, &chests, &furnaces, &mills, i),
+            read_slot(&open, &chests, &furnaces, &mills, &campfires, i),
             &server,
             &mut image,
             &mut bg,
@@ -674,7 +855,7 @@ fn paint_container_slots(
         let SlotKind::Container(i) = count.0 else {
             continue;
         };
-        text.0 = stack_count_text(read_slot(&open, &chests, &furnaces, &mills, i));
+        text.0 = stack_count_text(read_slot(&open, &chests, &furnaces, &mills, &campfires, i));
     }
 }
 
@@ -683,6 +864,7 @@ fn update_container_ui(
     open: Res<OpenContainer>,
     furnaces: Res<FurnaceStores>,
     mills: Res<MillStores>,
+    campfires: Res<CampfireStores>,
     mut root: Query<&mut Visibility, With<ContainerRoot>>,
     mut title: Query<&mut Text, (With<ContainerTitle>, Without<FurnaceStatus>)>,
     mut status: Query<&mut Text, (With<FurnaceStatus>, Without<ContainerTitle>)>,
@@ -712,6 +894,9 @@ fn update_container_ui(
                 "Furnace    [1] ore   [2] fuel   [3] result".into()
             }
             ContainerKind::Mill => "Hand Mill    [1] to grind   [2] result".into(),
+            ContainerKind::Campfire => {
+                "Campfire    [1] raw water   [2] fuel   [3] boiled".into()
+            }
         };
     }
     if let Ok(mut text) = status.single_mut() {
@@ -721,6 +906,14 @@ fn update_container_ui(
                 format!(
                     "Fundido: {:.0}%    Combustible restante: {:.0}s",
                     (f.progress / SMELT_TIME * 100.0).clamp(0.0, 100.0),
+                    f.burn.max(0.0)
+                )
+            }
+            ContainerKind::Campfire => {
+                let f = campfires.0.get(&o.a).cloned().unwrap_or_default();
+                format!(
+                    "Hirviendo: {:.0}%    Combustible restante: {:.0}s",
+                    (f.progress / BOIL_TIME * 100.0).clamp(0.0, 100.0),
                     f.burn.max(0.0)
                 )
             }

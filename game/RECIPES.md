@@ -40,6 +40,8 @@ Documento vivo: edítalo para ir dándole forma al árbol de progresión.
 | Matar **Vaca** | golpear | **Carne roja** ×3 + **Cuero** ×2 |
 | Matar **Oveja** | golpear | **Cordero** ×2 + **Lana** ×2 |
 | Matar **Pollo** | golpear | **Carne blanca** ×1 + **Pluma** ×2 |
+| Abrir un **cofre de ciudad en ruinas** | — | loot: Pastillas purificadoras · **Botiquín** · Vodka · **Anti-Rad Meds** · Carbón (o vacío) |
+| Recoger agua con un **Balde** metido en ella (`G`) | Balde | Balde de agua limpia / irradiada / tóxica según el tipo |
 
 **Dónde aparecen los materiales nuevos** (generación del terreno, `worldgen.rs`):
 **Arcilla** en parches en la arena de playas y en los bajíos de lagos y ríos;
@@ -210,6 +212,50 @@ gasta hambre) y ranura `[2]` con la Harina. Shift + mantener clic para romperlo
 lo fragua en un bloque de **Cemento** (gasta 1). Si ese bloque de Cemento se
 rompe, sólo devuelve **Ladrillos (objeto) ×2** — el mortero se pierde.
 
+### Pastilla purificadora ×2  *(sin forma)*
+`2 × Carbón vegetal` → 2 **Pastillas purificadoras** (carbón activado).
+
+### Vodka ×1  *(sin forma)*
+`3 × Papa` (fermentadas). Beber (`G`) baja mucho la **intoxicación** (deshidrata
+un poco).
+
+---
+
+## 3b. Agua contaminada — radiación e intoxicación
+
+El mundo se está volviendo post-apocalíptico: parte de los **ríos** llevan **Agua
+Irradiada** y algunas **lagunas / charcas interiores** llevan **Agua Tóxica**
+(también hay charcos irradiados en las calles de las ciudades en ruinas).
+
+- **Recoger:** con un **Balde** en la mano y `G` metido en el agua → *Balde de
+  agua irradiada / tóxica* según el tipo (o *Balde de agua limpia* si es agua
+  normal). Una botella de vidrio sólo se llena de agua **limpia**.
+- **Beber crudo** (`G`) da sed pero sube **radiación** (+32) o **intoxicación**
+  (+36); beber directo de la orilla, +16 / +20.
+- **Purificar:**
+  1. Pon el balde crudo en una **Fogata** (ranura 1) con combustible (ranura 2).
+     Tras ~6 s → *Balde de agua hervida*.
+  2. En la cuadrícula: `Balde de agua hervida + Pastilla purificadora` →
+     **Balde de agua limpia** (`+60` sed, sin efectos). Recupera el balde vacío.
+- **Curar el cuerpo:** radiación e intoxicación **bajan solas** (la radiación
+  muy despacio). **Vodka** corta la intoxicación de golpe; **Anti-Rad Meds**
+  (loot de ruinas) corta la radiación. Por encima de ~45 % cada una hace daño
+  a la salud e impide regenerarla.
+
+### Fogata ×1  *(a mano, 2×2)*
+```
+[ Palo ][ Palo ]
+[ Roca ][ Roca ]
+```
+Se usa como el horno (`W`): ranura `[1]` balde crudo · `[2]` combustible ·
+`[3]` balde hervido.
+
+### Balde de madera ×1  *(a mano, 2×2)*
+```
+[ Madera ][ Madera ]
+[ Madera ][        ]
+```
+
 ---
 
 ## 4. Fundido — Horno
@@ -263,13 +309,36 @@ mientras arde.
 | Pescado | +8 | +2 |
 | Pescado cocinado | +20 | +2 |
 | **Botella de agua** (`G`) — devuelve la botella vacía | — | +45 |
-| Beber junto al agua (`G` sin comida en la mano) | — | +28 |
-| Llenar **Botella vacía** (`G` junto al agua) | — | — (→ Botella de agua) |
+| Beber junto al agua **limpia** (`G` sin nada en la mano) | — | +28 |
+| Llenar **Botella vacía** (`G` junto al agua limpia) | — | — (→ Botella de agua) |
+| **Balde de agua limpia** — devuelve el balde | — | +60 |
+| **Balde de agua hervida** — devuelve el balde | — | +45 (·+7 intoxicación residual) |
+| **Balde de agua irradiada** (cruda) — devuelve el balde | — | +38 (·+32 radiación) |
+| **Balde de agua tóxica** (cruda) — devuelve el balde | — | +38 (·+36 intoxicación) |
+| **Vodka** | — | −6 (·−45 intoxicación) |
+| **Anti-Rad Meds** (loot) | — | — (·−50 radiación) |
+| **Botiquín** (loot de ruinas) | — | — (·+55 salud y a cada extremidad) |
 
 El **hambre** sólo baja al hacer algo (caminar/correr, trabajar el molino), nunca
-en reposo. La **sed** baja siempre (100 → 0 en 12:30 sin correr). A 0, cualquiera
-quita vida (despacio). Con ambas > 60 % la vida se regenera. Beber/llenar vale
-desde la orilla, vadeando o nadando.
+en reposo. La **sed** baja siempre (100 → 0 en 12:30 sin correr). A 0, hambre o sed
+quita vida despacio; lo mismo la **radiación > 45 %** y la **intoxicación > 40 %**
+(el daño escala con el nivel y bloquean la regeneración). Con hambre y sed > 60 %
+y sin envenenamiento, la vida se regenera. Beber/llenar vale desde la orilla,
+vadeando o nadando — pero nadar en agua contaminada también te contamina.
+
+## 7. Desgaste
+
+- **Durabilidad**: cada herramienta (cuchillo, hacha, pico, pala, hoz, caña) se
+  gasta al usarse (romper bloques, talar, arar, pescar, cazar). El tooltip
+  muestra `(XX% dur.)`; al llegar a 0 se rompe y desaparece. Aguante base: pico
+  250 usos · pala 220 · hacha 200 · cuchillo 150 · hoz 140 · caña 80.
+- **Podredumbre**: la comida se pudre con el tiempo (tooltip `(XX% fresh)` →
+  `(going off!)`). La **cruda** (carne, pescado, papa) dura ~6 min; la
+  **cocinada** (asados, pescado cocinado, pan) ~16 min. Rancia alimenta menos y,
+  casi podrida, intoxica; del todo podrida se vuelve **Rotten Food** (comerla
+  intoxica bastante). *Los cofres no la conservan — pendiente.*
+- **Oxidación**: infraestructura lista por debajo del capó (`WearKind::Rust`)
+  para cuando haya armas de fuego / equipo metálico. Ningún objeto la usa aún.
 
 ---
 
@@ -284,6 +353,10 @@ desde la orilla, vadeando o nadando.
 - [x] Cebo/alimentación de animales con su cultivo favorito
 - [x] Cadena de mampostería: Roca → Piedra → Roca Pulida → Ladrillos de Roca;
       Arcilla → Bodoque → Ladrillo → bloque de Ladrillo; Cemento (Arcilla + Grava)
+- [x] Radiación / intoxicación + Agua Irradiada/Tóxica + Fogata/Balde/Pastillas +
+      Vodka / Anti-Rad + loot de cofres de ruinas (giro post-apocalíptico soviético)
 - [ ] Herramientas de piedra (tras las de pedernal)
+- [ ] Contador Geiger · traje anti-radiación · máscara de gas
+- [ ] Más loot y tablas por tipo de cofre; sincronizar cofres en multijugador
 - [ ] Cuero → armadura / mochila · Lana → cama · Pluma → flechas mejores
 - [ ] Cama, puerta, escalera…

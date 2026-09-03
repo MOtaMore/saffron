@@ -1,5 +1,16 @@
 //! Player: point-&-click movement (League / Diablo style) with gravity,
 //! swept-AABB voxel collision and automatic 1-block step-up.
+//!
+//! This module also groups everything the player drives: the eagle `camera`, the
+//! `firstperson` view, block `interact`ion, remappable `keybinds`, `skins` and
+//! the `station` key. All re-exported flat at the crate root by `main.rs`.
+
+pub mod camera;
+pub mod firstperson;
+pub mod interact;
+pub mod keybinds;
+pub mod skins;
+pub mod station;
 
 use bevy::light::NotShadowCaster;
 use bevy::prelude::*;

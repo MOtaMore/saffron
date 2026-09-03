@@ -106,6 +106,7 @@ pub struct WorldGen {
     clay: Perlin,
     mud: Perlin,
     ruin: Perlin,
+    contam: Perlin,
     cave_a: Perlin,
     cave_b: Perlin,
     cavern: Perlin,
@@ -282,6 +283,7 @@ impl WorldGen {
             clay: Perlin::new(seed.wrapping_add(521)),
             mud: Perlin::new(seed.wrapping_add(541)),
             ruin: Perlin::new(seed.wrapping_add(809)),
+            contam: Perlin::new(seed.wrapping_add(877)),
             cave_a: Perlin::new(seed.wrapping_add(601)),
             cave_b: Perlin::new(seed.wrapping_add(619)),
             cavern: Perlin::new(seed.wrapping_add(637)),
@@ -465,6 +467,23 @@ impl WorldGen {
         Some(IVec3::new(ax, ay + 2, az))
     }
 
+    /// Which flavour of water fills a submerged cell: mostly plain, but a
+    /// fraction of rivers run **irradiated** and stagnant inland pools turn
+    /// **toxic** in patches (deterministic — the post-apocalyptic creep).
+    fn water_at(&self, x: i32, z: i32, h: i32, is_river: bool) -> Block {
+        let (fx, fz) = (x as f64, z as f64);
+        if is_river {
+            if self.contam.get([fx * 0.0016, fz * 0.0016]) > 0.30 {
+                return Block::RadWater;
+            }
+        } else if h < self.sea_level - 1
+            && self.contam.get([fx * 0.03 + 137.0, fz * 0.03 - 61.0]) > 0.55
+        {
+            return Block::ToxicWater;
+        }
+        Block::Water
+    }
+
     /// Altitude (noisy) above which the surface turns to snow.
     pub fn snowline(&self, x: i32, z: i32) -> f64 {
         82.0 + (self.snow.get([x as f64 * 0.02, z as f64 * 0.02]) * 0.5 + 0.5) * 12.0
@@ -543,7 +562,11 @@ impl WorldGen {
                     let mut block = if y == 0 {
                         Block::Bedrock
                     } else if y > h {
-                        if y <= sea { Block::Water } else { Block::Air }
+                        if y <= sea {
+                            self.water_at(wx, wz, h, is_river)
+                        } else {
+                            Block::Air
+                        }
                     } else if y == h {
                         let mut s = if is_river {
                             Block::Sand // river bed
@@ -706,6 +729,8 @@ impl WorldGen {
                     && (wz - az).rem_euclid(period) < MANZANA_SLOT;
                 let cover = if in_manzana {
                     Block::Grass
+                } else if self.ruin.get([wx as f64 * 0.25, wz as f64 * 0.25]) > 0.74 {
+                    Block::RadWater // irradiated puddle on the street
                 } else {
                     Block::Gravel // path between the manzanas
                 };
@@ -1266,5 +1291,6 @@ mod tests {
         assert!(interior > 60, "ruined buildings are not hollow: {interior} room cells");
     }
 }
+
 
 

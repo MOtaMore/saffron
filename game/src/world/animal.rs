@@ -479,10 +479,14 @@ fn attack_animals(
         return;
     }
 
-    let damage = match inventory.selected_item().and_then(Item::tool) {
+    let tool = inventory.selected_item().and_then(Item::tool);
+    let damage = match tool {
         Some(ToolKind::Knife) | Some(ToolKind::Axe) => 5.0,
         _ => 2.0,
     };
+    if matches!(tool, Some(ToolKind::Knife) | Some(ToolKind::Axe)) {
+        inventory.wear_selected(1);
+    }
     animal.health -= damage;
     let knock = (tf.translation - player_tf.translation)
         .with_y(0.0)

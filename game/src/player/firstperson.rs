@@ -200,6 +200,13 @@ fn first_person_move(
         MoveInput { wish, run, jump, face_wish: false },
         dt,
     );
+
+    // The body faces where the camera looks (yaw only), not the walk direction —
+    // so strafing / walking backwards keeps you oriented, and remote players +
+    // the held item point the right way.
+    if flat_f.length_squared() > 1e-4 {
+        tf.rotation = Quat::from_rotation_y(flat_f.x.atan2(flat_f.z));
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

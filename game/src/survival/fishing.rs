@@ -153,6 +153,8 @@ fn cast(
         Phase::Hooked => {
             let n = if frand(&mut rng) < 0.25 { 2 } else { 1 };
             inventory.add(Item::Fish, n);
+            inventory.wear_selected(1); // wears the rod
+
             // Despawn the nearest visible fish to the bobber, for flavour.
             if let Some(bob) = bobber_pos.iter().next() {
                 if let Some((fish, _)) = swimmers

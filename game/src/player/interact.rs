@@ -269,7 +269,11 @@ fn mining(
     }
     // Chests / furnaces are opened, not mined — hold Shift to actually break one.
     let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
-    if matches!(target, Block::Chest | Block::Furnace | Block::HandMill) && !shift {
+    if matches!(
+        target,
+        Block::Chest | Block::Furnace | Block::HandMill | Block::Campfire
+    ) && !shift
+    {
         state.0 = None;
         return;
     }
@@ -308,6 +312,10 @@ fn mining(
             fell_tree(&mut world, &mut inventory, cell);
         } else if world.set_block(cell.x, cell.y, cell.z, Block::Air) {
             grant_drop(&mut inventory, block, &mut rng);
+        }
+        // Wear the tool a little for the block it just broke.
+        if tool.is_some() {
+            inventory.wear_selected(1);
         }
     }
 }
@@ -500,7 +508,7 @@ fn fell_tree(world: &mut ChunkWorld, inventory: &mut Inventory, start: IVec3) {
 struct MiningAssets {
     cube: Handle<Mesh>,
     /// Indexed by `block as usize` (enum order).
-    particle_mat: [Handle<StandardMaterial>; 27],
+    particle_mat: [Handle<StandardMaterial>; 30],
 }
 
 #[derive(Component)]
@@ -543,6 +551,9 @@ fn setup_mining_assets(
         Block::StoneBrick,
         Block::Bricks,
         Block::Cement,
+        Block::RadWater,
+        Block::ToxicWater,
+        Block::Campfire,
     ];
     let particle_mat = order.map(|b| {
         let c = b.color();

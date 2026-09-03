@@ -10,6 +10,12 @@
 //! Modes ([`NetMode`]): `Solo` (default), `Host` (listen server — you play and
 //! friends join), `Client` (you joined someone), `Server` (headless dedicated,
 //! launched with `--server`; see `main.rs`).
+//!
+//! Also groups Discord rich presence (`discord`) and the in-game chat `command`s
+//! (`/biome`, `/city`, …). Re-exported flat at the crate root by `main.rs`.
+
+pub mod command;
+pub mod discord;
 
 use std::collections::HashMap;
 use std::io::{self, Read, Write};

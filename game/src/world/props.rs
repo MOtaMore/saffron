@@ -38,6 +38,8 @@ struct PropAssets {
     torch_flame_mesh: Handle<Mesh>,
     torch_stick_mat: Handle<StandardMaterial>,
     torch_flame_mat: Handle<StandardMaterial>,
+    campfire_log_mesh: Handle<Mesh>,
+    campfire_flame_mesh: Handle<Mesh>,
     crop_mesh: Handle<Mesh>,
     crop_young_mat: Handle<StandardMaterial>,
     crop_mature_mat: Handle<StandardMaterial>,
@@ -85,6 +87,8 @@ fn setup_prop_assets(
         furnace_lit,
         torch_stick_mesh: meshes.add(Cuboid::new(0.09, 0.42, 0.09)),
         torch_flame_mesh: meshes.add(Cuboid::new(0.16, 0.16, 0.16)),
+        campfire_log_mesh: meshes.add(Cuboid::new(0.62, 0.14, 0.16)),
+        campfire_flame_mesh: meshes.add(Cuboid::new(0.34, 0.4, 0.34)),
         torch_stick_mat: materials.add(StandardMaterial {
             base_color: Color::srgb(0.34, 0.23, 0.13),
             perceptual_roughness: 0.9,
@@ -175,6 +179,51 @@ fn sync_props(
                             ..default()
                         },
                         Transform::from_xyz(0.0, 0.55, 0.0),
+                    ));
+                })
+                .id();
+            index.0.insert(pos, entity);
+            continue;
+        }
+
+        // Campfire: a couple of crossed logs with a flame and a warm light.
+        if kind == Block::Campfire {
+            let entity = commands
+                .spawn((
+                    Transform::from_translation(pos.as_vec3() + Vec3::new(0.5, 0.0, 0.5)),
+                    Visibility::default(),
+                    Prop {
+                        pos,
+                        kind,
+                        lid: None,
+                        lid_t: 0.0,
+                        meshes: Vec::new(),
+                        lit: None,
+                    },
+                ))
+                .with_children(|c| {
+                    for angle in [0.5_f32, -0.5] {
+                        c.spawn((
+                            Mesh3d(assets.campfire_log_mesh.clone()),
+                            MeshMaterial3d(assets.torch_stick_mat.clone()),
+                            Transform::from_xyz(0.0, 0.08, 0.0)
+                                .with_rotation(Quat::from_rotation_y(angle)),
+                        ));
+                    }
+                    c.spawn((
+                        Mesh3d(assets.campfire_flame_mesh.clone()),
+                        MeshMaterial3d(assets.torch_flame_mat.clone()),
+                        Transform::from_xyz(0.0, 0.32, 0.0),
+                    ));
+                    c.spawn((
+                        PointLight {
+                            color: Color::srgb(1.0, 0.68, 0.32),
+                            intensity: 260_000.0,
+                            range: 16.0,
+                            shadow_maps_enabled: false,
+                            ..default()
+                        },
+                        Transform::from_xyz(0.0, 0.5, 0.0),
                     ));
                 })
                 .id();

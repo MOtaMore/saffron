@@ -187,6 +187,10 @@ con IPC; si Discord no está abierto no pasa nada (reintenta cada 15 s).
     la superficie, en regiones dispersas (`ravine_mask`).
   - **Arcilla / Barro**: parches de Arcilla en la arena de bajíos y playas de
     lagos/ríos; Barro en las riberas de hierba pegadas a un río sin arena.
+  - **Agua contaminada** (`WorldGen::water_at`, ruido `contam`): una fracción de
+    los **ríos** lleva **Agua Irradiada** y algunas **charcas interiores**
+    (agua estancada bajo el nivel del mar) llevan **Agua Tóxica**. Determinista;
+    la mayor parte del agua sigue siendo limpia (transición gradual).
   - **Ciudades en ruinas** (`stamp_ruins`): en regiones de `16 × 16` chunks
     (`CITY_PER_MIL ≈ 9 %`), sobre tierra firme. La ciudad es una rejilla de
     **manzanas** (`2×2..3×3`) separadas por **calles** (`STREET_W = 9`); cada
@@ -200,9 +204,10 @@ con IPC; si Discord no está abierto no pasa nada (reintenta cada 15 s).
     `ROOM_STEP = 3` y un pasillo de 1 por el eje mayor. **Techos a medio
     derruir** (agujeros que crecen con el daño y la altura) y una **caja de
     escalera** en una esquina — dos peldaños + hueco en cada losa — para subir
-    de planta. Cada edificio deja **0–2 cofres** en la planta baja, **vacíos**
-    por ahora (se abren como cualquier cofre; el botín llegará más adelante).
-    Medio derrumbados (ruido `ruin`) — inspiración soviética
+    de planta. Cada edificio deja **0–2 cofres** en la planta baja con **loot**
+    determinista (Pastillas purificadoras, Vodka, Anti-Rad Meds, Carbón — o
+    vacío; `container::seed_ruin_chests`) y las calles tienen algún **charco de
+    agua irradiada**. Medio derrumbados (ruido `ruin`) — inspiración soviética
     temprana / *Samosbor*. Cada edificio se nivela a su propia base y todo se
     ancla dentro de la región → determinista desde la semilla, sin red ni
     guardado, igual que las estructuras.
@@ -350,6 +355,36 @@ con IPC; si Discord no está abierto no pasa nada (reintenta cada 15 s).
   sed) o **llena una botella vacía** (→ Botella de agua). Beber una **Botella de
   agua** (`G`) da +45 sed y te devuelve la botella vacía. Si la vida llega a 0
   reapareces en tu punto de inicio con todo lleno (conservas el inventario).
+- **Radiación e intoxicación** (`survival.rs`, giro post-apocalíptico): dos barras
+  más bajo Hambre/Sed que **sólo aparecen al contaminarte**. Suben al **beber
+  agua contaminada** cruda o al **nadar en ella**; bajan solas (la radiación muy
+  despacio). Por encima de ~45 % (rad) / ~40 % (tox) hacen daño a la vida y
+  cortan la regeneración. **Vodka** (3 Papas) baja la intoxicación de golpe;
+  **Anti-Rad Meds** (loot de ruinas) baja la radiación.
+- **Aviso de zona irradiada** (`radiation.rs`): al acercarse (o entrar) a agua
+  irradiada aparece un **granulado verdoso en pantalla** que se intensifica con
+  la cercanía, y suena el **crepitar de un contador Geiger** (ticks sintéticos
+  cada vez más rápidos). El campo (`RadField.ambient`, 0..1) se muestrea en un
+  radio de 8 bloques y se suaviza; también hace *tick* si llevas radiación
+  encima aunque no haya fuente cerca. Sólo es feedback — el daño va por `Stats`.
+- **Monigote de extremidades** (estilo Fallout, en el panel de inventario): 6
+  recuadros colocados como un cuerpo (cabeza / torso / 2 brazos / 2 piernas) que
+  se tiñen de **verde→amarillo→rojo** con la vida de cada parte y muestran el %.
+  Las extremidades siguen a la salud global con pesos (cabeza y torso aguantan
+  más). El **Botiquín** (`Item::Medkit`, loot de cofres de ruinas) cura +55 a la
+  salud y a cada parte.
+- **Desgaste** (`Stack.wear`, `Item::wear_kind`): las **herramientas** pierden
+  **durabilidad** al usarse (romper bloques, talar, arar, pescar, cazar) y se
+  rompen a 0; la **comida se pudre** con el tiempo (`tick_spoilage`, 1 pt/s) —
+  la cruda ~6 min, la cocinada ~16 min — hasta convertirse en *Rotten Food*
+  (intoxica). El tooltip del inventario muestra el estado (`% dur.` / `% fresh`).
+  Hay un hook oculto de **oxidación** (`WearKind::Rust`) para futuras armas de
+  fuego / equipo metálico. `wear` se guarda en el save y se mezcla al apilar.
+- **Tratar el agua**: **Balde** (3 Maderas) + `G` metido en el agua → balde de
+  agua *limpia / irradiada / tóxica* según el tipo. El balde crudo se **hierve
+  en una Fogata** (panel tipo horno: agua · combustible · resultado) y luego
+  `Balde hervido + Pastilla purificadora` (2 Carbón) en la cuadrícula →
+  **Balde de agua limpia** (+60 sed). Detalle en `RECIPES.md`.
 - **Botellas**: 2 vidrios uno encima del otro → 2 botellas vacías (a mano).
 - **Agricultura** (`farming.rs`):
   - **Hoz de pedernal** — *sólo* ara: clic izquierdo sobre Tierra/Hierba la
@@ -453,41 +488,79 @@ cargo run -- --connect 127.0.0.1:25599
 
 ## Estructura
 
+`src/` está agrupado por dominio en subcarpetas. Cada carpeta reexporta sus
+módulos planos en la raíz del crate (`main.rs`), así que el código sigue usando
+`crate::block::…`, `crate::camera::…`, etc. sin cambios.
+
+### `src/world/` — el mundo voxel
+
 | Archivo | Responsabilidad |
 |---------|-----------------|
-| `block.rs` | Tipos de voxel y sus propiedades (color, opacidad, colisión) |
+| `block.rs` | Tipos de voxel y sus propiedades (color, opacidad, colisión, agua/desgaste) |
 | `chunk.rs` | Almacenamiento de chunk y helpers de coordenadas |
-| `worldgen.rs` | Generación procedural (ruido → `ChunkData`) |
-| `mesher.rs` | `ChunkData` → malla por descarte de caras (con corte de capa `max_y`, UVs de atlas) |
+| `worldgen.rs` | Generación procedural (ruido → `ChunkData`): terreno, ríos, cuevas, agua contaminada, estructuras, ciudades en ruinas |
+| `mesher.rs` | `ChunkData` → malla por descarte de caras (corte de capa, UVs de atlas) |
 | `chunk_material.rs` | Material de chunk (`ExtendedMaterial` + shader de cutout) + material de agua |
 | `block_atlas.rs` | Monta el atlas de texturas de bloque en runtime |
-| `props.rs` | Modelos glTF de banco / cofre / horno sobre los bloques |
-| `streaming.rs` | Carga/descarga infinita, tareas en segundo plano, re-mallado por capa, `set_block` |
-| `player.rs` | Spawn, movimiento point & click y colisión del jugador |
-| `camera.rs` | Cámara ortográfica de seguimiento |
-| `view.rs` | Capa de visión (corte en Y) y sus controles |
-| `item.rs` | Items, inventario 5×10, hotbar, herramientas, crafteo (UI) |
-| `interact.rs` | Raycast a celda, minado temporizado, talar/colocar, estancias |
+| `props.rs` | Modelos/props sobre bloques (banco, cofre, horno, antorcha, fogata, cultivos) |
+| `streaming.rs` | Carga/descarga infinita, tareas en segundo plano, re-mallado, `set_block` |
+| `structure.rs` | Formato `.json` de estructuras + `load_structure` / `stamp_structure` + librería |
 | `scatter.rs` | Palos y plantas en el suelo (generación y recogida) |
-| `animal.rs` | Manadas de animales que deambulan, se golpean y sueltan comida/recursos |
+| `view.rs` | Capa de visión (corte en Y) y sus controles |
 | `daynight.rs` | Ciclo día/noche: sol, cielo y luz ambiental según `GameClock` |
-| `survival.rs` | Vida / hambre / sed, comer-beber (`G`), muerte y reaparición |
-| `farming.rs` | Arado (hoz), hidratación de tierra arada, siembra y crecimiento del trigo |
-| `save.rs` | Menú inicial (`GameFlow` state) + guardado/carga JSON |
-| `container.rs` | Cofres (simple/doble), horno y molino manual: almacenamiento, fundido/molienda, UI |
-| `fishing.rs` | Caña, lanzamiento sobre agua y minijuego de pesca |
-| `station.rs` | Tecla `W`: escaneo + selector de estación (banco / cofre / horno) |
-| `pause.rs` | Menú de pausa (`Esc`) y condición `not_paused` |
-| `net.rs` | Multijugador TCP casero: modos Host/Client/Server, sync de ediciones + jugadores + chat |
-| `command.rs` | Comandos de chat (`/biome`, `/structure`, `/city`, `/spawn`, …) |
+| `animal.rs` | Manadas que deambulan, se golpean, se alimentan, se reproducen y sueltan recursos |
+
+### `src/player/` — jugador y control
+
+| Archivo | Responsabilidad |
+|---------|-----------------|
+| `mod.rs` | Spawn, movimiento (point-&-click + `step_player` compartido), colisión, modelo/held-item |
+| `camera.rs` | Cámara ortográfica de seguimiento (vista de águila) |
 | `firstperson.rs` | Vista en primera persona alternable (`V`): cámara perspectiva, mouse-look, WASD |
-| `menu.rs` | Front-end: Jugar (mundos) / Multijugador (servidores) / Configuración / Salir |
+| `interact.rs` | Raycast a celda, minado temporizado, talar/colocar, modo estancia, durabilidad |
 | `keybinds.rs` | Controles remapeables (`Action` → `KeyCode`) + pantalla de rebind |
 | `skins.rs` | Catálogo de skins + pantalla para verlas y elegirlas |
-| `editor.rs` | Modo Structure Editor: estado propio, cámara libre, browser de contenido, exportar `.json` |
-| `structure.rs` | Formato `.json` de estructuras + `load_structure` / `stamp_structure` (API para el juego base) |
-| `discord.rs` | Discord Rich Presence en hilo aparte (estado del jugador) |
+| `station.rs` | Tecla `W` / `F`: escaneo + selector de estación (banco / cofre / horno / fogata) |
+
+### `src/survival/` — supervivencia
+
+| Archivo | Responsabilidad |
+|---------|-----------------|
+| `mod.rs` | Vida / hambre / sed / radiación / intoxicación, extremidades, comer-beber (`G`), muerte |
+| `farming.rs` | Arado (hoz), hidratación de tierra arada, siembra y crecimiento del trigo |
+| `fishing.rs` | Caña, lanzamiento sobre agua y pesca |
+| `radiation.rs` | Granulado en pantalla + contador Geiger cerca de agua irradiada |
+
+### `src/item/` — items e inventario
+
+| Archivo | Responsabilidad |
+|---------|-----------------|
+| `mod.rs` | Items, inventario 5×10, hotbar, herramientas, crafteo (UI), desgaste (`Stack.wear`), paper doll |
+| `container.rs` | Cofres, horno, molino y fogata: almacenamiento, fundido/hervido, UI, loot de ruinas |
+
+### `src/ui/` — interfaz
+
+| Archivo | Responsabilidad |
+|---------|-----------------|
+| `menu.rs` | Front-end: Jugar / Multijugador / Configuración (+ Gráficos: FPS, SSAO) / Salir |
+| `pause.rs` | Menú de pausa (`Esc`), estado `GameFlow` y condición `not_paused` |
 | `hud.rs` | Lectura de depuración en pantalla |
+| `editor.rs` | Modo Structure Editor: estado propio, cámara libre, browser de contenido, exportar `.json` |
+
+### `src/net/` — red
+
+| Archivo | Responsabilidad |
+|---------|-----------------|
+| `mod.rs` | Multijugador TCP casero: modos Host/Client/Server, sync de ediciones + jugadores + chat |
+| `command.rs` | Comandos de chat (`/biome`, `/structure`, `/city`, `/spawn`, …) |
+| `discord.rs` | Discord Rich Presence en hilo aparte (estado del jugador) |
+
+### `src/` (raíz)
+
+| Archivo | Responsabilidad |
+|---------|-----------------|
+| `main.rs` | `App`, plugins, servidor dedicado, ícono de ventana; reexporta los módulos de cada carpeta |
+| `save.rs` | Mundos (`saves/*.json`), guardado/carga, guardado del jugador en el servidor |
 
 ## Assets (para el futuro)
 
