@@ -301,6 +301,30 @@ pub struct ServerConfig {
     pub motd: String,
 }
 
+/// Directory the dedicated server keeps its state in (`server.json`,
+/// `server_world.json`). Defaults to the working directory — fine for local
+/// dev — but a deployed server should pin it: set `SAFFRON_DIR`, or run under
+/// systemd with `StateDirectory=` (which exports `STATE_DIRECTORY`). Relying on
+/// the CWD is how a systemd unit with no `WorkingDirectory=` ends up trying to
+/// write to `/` and silently losing every world + player on restart.
+fn data_dir() -> PathBuf {
+    if let Some(d) = std::env::var_os("SAFFRON_DIR") {
+        return PathBuf::from(d);
+    }
+    if let Some(d) = std::env::var_os("STATE_DIRECTORY") {
+        // systemd may hand several colon-separated paths; take the first.
+        let s = d.to_string_lossy();
+        if let Some(first) = s.split(':').next().filter(|p| !p.is_empty()) {
+            return PathBuf::from(first);
+        }
+    }
+    PathBuf::from(".")
+}
+
+fn data_path(name: &str) -> PathBuf {
+    data_dir().join(name)
+}
+
 impl ServerConfig {
     pub fn load_or_create() -> Self {
         #[derive(Serialize, Deserialize)]
@@ -309,10 +333,11 @@ impl ServerConfig {
             seed: u32,
             motd: String,
         }
-        let path = PathBuf::from("server.json");
+        let path = data_path("server.json");
+        let existed = path.exists();
         let mut raw: Raw = std::fs::read_to_string(&path)
             .ok()
-            .and_then(|t| serde_json::from_str(&t).ok())
+            .and_then(|t| serde_json::from_str(t.trim_start_matches('\u{feff}')).ok())
             .unwrap_or(Raw {
                 port: DEFAULT_PORT,
                 seed: 0,
@@ -321,10 +346,19 @@ impl ServerConfig {
         if raw.seed == 0 {
             raw.seed = fresh_seed();
         }
-        let _ = std::fs::write(
+        if let Err(e) = std::fs::write(
             &path,
             serde_json::to_string_pretty(&raw).unwrap_or_default(),
-        );
+        ) {
+            // If this fails, `server_world.json` will fail the same way and the
+            // world silently resets every restart — make it loud.
+            error!(
+                "cannot write {path:?}: {e} — set SAFFRON_DIR or a systemd \
+                 WorkingDirectory/StateDirectory to a writable path"
+            );
+        } else if !existed {
+            info!("server config created at {path:?} (seed {})", raw.seed);
+        }
         Self {
             port: raw.port,
             seed: raw.seed,
@@ -334,7 +368,7 @@ impl ServerConfig {
 }
 
 fn server_world_path() -> PathBuf {
-    PathBuf::from("server_world.json")
+    data_path("server_world.json")
 }
 
 /// Per-player state the dedicated server keeps so inventory + stats survive a
@@ -447,6 +481,10 @@ fn server_start_listener(
     // per-player state.
     let mut players: HashMap<String, PlayerRecord> = HashMap::new();
     if *mode == NetMode::Server {
+        match std::fs::canonicalize(data_dir()) {
+            Ok(d) => info!("server state dir: {}", d.display()),
+            Err(e) => error!("server state dir {:?} is unusable: {e}", data_dir()),
+        }
         let (saved_edits, saved_players) = load_server_world();
         if !saved_edits.is_empty() {
             info!("server world: {} edited blocks", saved_edits.len());
